@@ -28,7 +28,7 @@ SECTION 2 — headline "Hecho para músicos, no para reuniones", with a 2x3 grid
 
 SECTION 3 — a slim dark keyboard-shortcuts bar showing four golden keyboard keycaps in a row labeled "Ctrl+Alt+1 Cámara", "Ctrl+Alt+2 Celular", "Ctrl+Alt+4 Vista dual", "Ctrl+Alt+R Grabar".
 
-FOOTER: small text "musicam.vercel.app" in gold, centered.
+FOOTER: small text "musicam-update.vercel.app" in gold, centered.
 
 Typography: modern geometric sans-serif, high contrast, all text crisp and legible. No photographs, no people, no watermarks. Spanish text exactly as written in quotes.
 ```
@@ -57,5 +57,4 @@ VISUAL STYLE: Light theme. Background warm off-white (#faf7f0), dark navy text (
 
 - Si algún texto sale con errores ortográficos, pide la corrección en un segundo turno: *"Keep everything identical but fix the text of card 3 to say exactly 'Celular como cámara de manos'"* — Nano Banana edita bien sin regenerar todo.
 - Si los 6 íconos salen demasiado parecidos, pide: *"Make each of the six feature icons clearly distinct"*.
-- Para usar tu URL real de Vercel, reemplaza `musicam.vercel.app` en el FOOTER antes de generar.
 - Genera 2–3 veces y quédate con la mejor composición; la variación entre corridas es alta.
