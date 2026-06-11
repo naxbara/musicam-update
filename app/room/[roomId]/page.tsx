@@ -1,5 +1,6 @@
 "use client";
 
+import { use } from "react";
 import dynamic from "next/dynamic";
 
 // PeerJS and Web Audio require window — render client-side only
@@ -12,6 +13,11 @@ const CallRoom = dynamic(() => import("@/components/CallRoom"), {
   ),
 });
 
-export default function RoomPage({ params }: { params: { roomId: string } }) {
-  return <CallRoom roomId={decodeURIComponent(params.roomId)} />;
+export default function RoomPage({
+  params,
+}: {
+  params: Promise<{ roomId: string }>;
+}) {
+  const { roomId } = use(params);
+  return <CallRoom roomId={decodeURIComponent(roomId)} />;
 }

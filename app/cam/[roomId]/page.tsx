@@ -1,5 +1,6 @@
 "use client";
 
+import { use } from "react";
 import dynamic from "next/dynamic";
 
 const PhoneCam = dynamic(() => import("@/components/PhoneCam"), {
@@ -11,6 +12,11 @@ const PhoneCam = dynamic(() => import("@/components/PhoneCam"), {
   ),
 });
 
-export default function CamPage({ params }: { params: { roomId: string } }) {
-  return <PhoneCam roomId={decodeURIComponent(params.roomId)} />;
+export default function CamPage({
+  params,
+}: {
+  params: Promise<{ roomId: string }>;
+}) {
+  const { roomId } = use(params);
+  return <PhoneCam roomId={decodeURIComponent(roomId)} />;
 }
