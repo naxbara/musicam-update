@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+  background: #0c0e14;
+  color: #e8eaf2;
+}
+
+/* Recording pulse */
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.rec-pulse {
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
