@@ -76,6 +76,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const [bpm, setBpm] = useState(92);
   const [dualActive, setDualActive] = useState(false);
   const [markerCount, setMarkerCount] = useState(0);
+  const [isMac, setIsMac] = useState(false);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -236,6 +237,11 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     } catch {
       /* ignore */
     }
+  }, []);
+
+  // Platform detection for shortcut labels (⌘⌥ on Mac, Ctrl+Alt elsewhere)
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent));
   }, []);
 
   // ------------------------------------------------------------- controls
@@ -779,6 +785,9 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     ? { left: pipPos.x, top: pipPos.y }
     : { right: 16, bottom: 96 };
 
+  /** Shortcut label for the current platform. */
+  const sc = (k: string) => (isMac ? `⌘⌥${k}` : `Ctrl+Alt+${k}`);
+
   // ------------------------------------------------------------------ UI
 
   return (
@@ -954,48 +963,78 @@ export default function CallRoom({ roomId }: { roomId: string }) {
 
       {/* Bottom control bar */}
       <div className="absolute bottom-0 left-0 right-0 z-10 flex flex-wrap items-center justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent px-4 pb-4 pt-10">
-        <ControlButton onClick={toggleMic} active={micOn} label={micOn ? "🎙️" : "🔇"} title="Micrófono" />
-        <ControlButton onClick={toggleCam} active={camOn} label={camOn ? "📷" : "🚫"} title="Cámara" />
-        <ControlButton
-          onClick={() => void toggleScreenShare()}
-          active={!sharing}
-          highlight={sharing}
-          label="🖥️"
-          title="Compartir pantalla (⌘⌥3)"
+        <HotkeyButton
+          onClick={toggleMic}
+          active={micOn}
+          label={micOn ? "🎙️" : "🔇"}
+          name="Micrófono"
+          description={micOn ? "Silencia tu micrófono." : "Reactiva tu micrófono."}
         />
-        <ControlButton
+        <HotkeyButton
+          onClick={toggleCam}
+          active={camOn}
+          label={camOn ? "📷" : "🚫"}
+          name="Cámara"
+          description={camOn ? "Apaga tu video sin salir de la clase." : "Enciende tu video."}
+        />
+        <HotkeyButton
+          onClick={() => void switchCamera(0)}
+          active={true}
+          label="🎥"
+          name="Cámara principal"
+          description="Vuelve a la cámara del computador (la que viene por defecto)."
+          shortcut={sc("1")}
+        />
+        <HotkeyButton
           onClick={() =>
-            usingPhone ? void switchCamera(0) : setShowPhoneQR((v) => !v)
+            phoneStreamRef.current ? void selectSecondCamera() : setShowPhoneQR(true)
           }
           active={!usingPhone}
           highlight={usingPhone}
           label="📱"
-          title={
-            usingPhone
-              ? "Volver a la cámara principal (⌘⌥1)"
-              : "Conectar celular como cámara (⌘⌥2)"
-          }
+          name="Cámara del celular"
+          description="Cambia a la cámara del celular. Si aún no está conectado, muestra el código QR para vincularlo."
+          shortcut={sc("2")}
         />
-        <ControlButton
+        <HotkeyButton
+          onClick={() => void toggleScreenShare()}
+          active={!sharing}
+          highlight={sharing}
+          label="🖥️"
+          name="Compartir pantalla"
+          description="Muestra tu pantalla (partituras, apps). Presiona de nuevo para detener."
+          shortcut={sc("3")}
+        />
+        <HotkeyButton
           onClick={() => void toggleDualView()}
           active={!dualActive}
           highlight={dualActive}
           label="👥"
-          title="Vista dual: cara + manos (⌘⌥4)"
+          name="Vista dual"
+          description="Tu cara y tus manos a la vez, lado a lado. Requiere el celular conectado."
+          shortcut={sc("4")}
         />
-        <ControlButton
+        <HotkeyButton
           onClick={() => (recording ? void stopRecording() : startRecording())}
           active={!recording}
           highlight={recording}
           label={recording ? "⏹" : "⏺"}
-          title="Grabar (⌘⌥R) / Detener (Pausa)"
+          name={recording ? "Detener y guardar" : "Grabar la clase"}
+          description={
+            recording
+              ? "Termina la grabación y guarda el video (audio sincronizado) en tu escritorio."
+              : "Graba video y audio de ambos participantes, sincronizados."
+          }
+          shortcut={recording ? "Pausa" : sc("R")}
         />
         {recording && (
-          <ControlButton
+          <HotkeyButton
             onClick={addMarker}
             active={true}
             label="🚩"
-            title="Marcar momento clave (⌘⌥M)"
+            name="Marcar momento clave"
+            description="Guarda el minuto actual; al final recibes la lista de momentos para repasar."
+            shortcut={sc("M")}
           />
         )}
 
@@ -1069,32 +1108,52 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   );
 }
 
-function ControlButton({
+/**
+ * Round control button with a rich hover tooltip: action name, what it does,
+ * and its keyboard shortcut (when it has one).
+ */
+function HotkeyButton({
   onClick,
   active,
   highlight,
   label,
-  title,
+  name,
+  description,
+  shortcut,
 }: {
   onClick: () => void;
   active: boolean;
   highlight?: boolean;
   label: string;
-  title: string;
+  name: string;
+  description: string;
+  shortcut?: string;
 }) {
   return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={`flex h-11 w-11 items-center justify-center rounded-full text-lg transition ${
-        highlight
-          ? "bg-red-600 hover:bg-red-500"
-          : active
-            ? "bg-white/15 hover:bg-white/25"
-            : "bg-red-600/80 hover:bg-red-500"
-      }`}
-    >
-      {label}
-    </button>
+    <div className="group relative">
+      <button
+        onClick={onClick}
+        aria-label={name}
+        className={`flex h-11 w-11 items-center justify-center rounded-full text-lg transition ${
+          highlight
+            ? "bg-red-600 hover:bg-red-500"
+            : active
+              ? "bg-white/15 hover:bg-white/25"
+              : "bg-red-600/80 hover:bg-red-500"
+        }`}
+      >
+        {label}
+      </button>
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden w-56 -translate-x-1/2 rounded-xl border border-gray-700 bg-panel/95 p-3 text-center shadow-2xl group-hover:block">
+        <p className="text-xs font-semibold text-white">{name}</p>
+        <p className="mt-1 text-[11px] leading-snug text-gray-400">{description}</p>
+        {shortcut && (
+          <span className="mt-2 inline-block rounded-md border border-accent/50 bg-accent/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent">
+            {shortcut}
+          </span>
+        )}
+        <span className="absolute left-1/2 top-full -ml-1.5 border-[6px] border-transparent border-t-gray-700" />
+      </div>
+    </div>
   );
 }
