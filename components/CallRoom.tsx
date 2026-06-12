@@ -5,13 +5,34 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Peer, { MediaConnection } from "peerjs";
 import {
-  RAW_AUDIO_CONSTRAINTS,
+  buildAudioConstraints,
   createInstrumentChain,
   hifiOpusSdp,
+  type ChannelMode,
   type InstrumentChain,
 } from "@/lib/audio";
 import { CallRecorder, drawCover, saveRecording } from "@/lib/recorder";
 import { Metronome } from "@/lib/metronome";
+import TunerPanel from "@/components/TunerPanel";
+import MetronomePanel from "@/components/MetronomePanel";
+import AudioSettingsPanel from "@/components/AudioSettingsPanel";
+import {
+  DualIcon,
+  FlagIcon,
+  ForkIcon,
+  HelpIcon,
+  MetronomeIcon,
+  MicIcon,
+  MicOffIcon,
+  PhoneIcon,
+  RecordIcon,
+  ScreenIcon,
+  SendIcon,
+  SlidersIcon,
+  StopIcon,
+  VideoIcon,
+  VideoOffIcon,
+} from "@/components/icons";
 
 type Status = "init" | "waiting" | "connecting" | "connected" | "ended" | "error";
 
@@ -59,6 +80,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   // --- state ---
   const [status, setStatus] = useState<Status>("init");
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localRawStream, setLocalRawStream] = useState<MediaStream | null>(null);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -66,14 +88,21 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const [boost, setBoost] = useState(1.4);
   const [enhance, setEnhance] = useState(true);
   const [echoCancel, setEchoCancel] = useState(false);
+  const [channel, setChannel] = useState<ChannelMode>("stereo");
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [micId, setMicId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showTuner, setShowTuner] = useState(false);
+  const [showMetro, setShowMetro] = useState(false);
   const [usingPhone, setUsingPhone] = useState(false);
   const [showPhoneQR, setShowPhoneQR] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [metroOn, setMetroOn] = useState(false);
   const [bpm, setBpm] = useState(92);
+  const [beat, setBeat] = useState(-1);
   const [dualActive, setDualActive] = useState(false);
   const [markerCount, setMarkerCount] = useState(0);
   const [isMac, setIsMac] = useState(false);
@@ -97,6 +126,15 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const setLocalPreview = useCallback((track: MediaStreamTrack) => {
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = new MediaStream([track]);
+    }
+  }, []);
+
+  const refreshAudioDevices = useCallback(async () => {
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      setAudioDevices(list.filter((d) => d.kind === "audioinput"));
+    } catch {
+      /* ignore */
     }
   }, []);
 
@@ -129,7 +167,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
       try {
         const media = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: RAW_AUDIO_CONSTRAINTS,
+          audio: buildAudioConstraints({ echoCancel: false }),
         });
         if (cancelled) {
           media.getTracks().forEach((t) => t.stop());
@@ -137,9 +175,12 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         }
 
         rawAudioRef.current = new MediaStream(media.getAudioTracks());
+        setLocalRawStream(rawAudioRef.current);
         cameraTrackRef.current = media.getVideoTracks()[0] ?? null;
+        setMicId(media.getAudioTracks()[0]?.getSettings().deviceId ?? null);
+        void refreshAudioDevices();
 
-        const chain = createInstrumentChain(rawAudioRef.current);
+        const chain = createInstrumentChain(rawAudioRef.current, "stereo");
         chainRef.current = chain;
 
         const outTracks: MediaStreamTrack[] = [];
@@ -163,7 +204,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
           guest.on("error", (err: any) => {
             if (err.type === "peer-unavailable") {
               if (String(err.message).includes("-cam")) {
-                notify("El celular aún no está conectado. Escanea el QR del botón 📱.");
+                notify("El celular aún no está conectado. Escanea el QR del botón de celular.");
                 return;
               }
               setStatus("waiting");
@@ -194,7 +235,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
             startAsGuest();
           } else if (err.type === "peer-unavailable") {
             if (String(err.message).includes("-cam")) {
-              notify("El celular aún no está conectado. Escanea el QR del botón 📱.");
+              notify("El celular aún no está conectado. Escanea el QR del botón de celular.");
             }
           } else {
             setStatus("error");
@@ -207,9 +248,11 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     }
 
     void setup();
+    navigator.mediaDevices.addEventListener?.("devicechange", refreshAudioDevices);
 
     return () => {
       cancelled = true;
+      navigator.mediaDevices.removeEventListener?.("devicechange", refreshAudioDevices);
       callRef.current?.close();
       peerRef.current?.destroy();
       chainRef.current?.close();
@@ -272,43 +315,88 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     });
   }, []);
 
-  /** Re-acquire mic with/without echo cancellation and rebuild the chain. */
+  /**
+   * Re-acquires the mic and rebuilds the processing chain. Used when the
+   * input device, the channel mode or echo cancellation changes.
+   */
+  const rebuildAudio = useCallback(
+    async (opts: {
+      deviceId?: string | null;
+      echo?: boolean;
+      channel?: ChannelMode;
+    }) => {
+      const nextDevice = opts.deviceId !== undefined ? opts.deviceId : micId;
+      const nextEcho = opts.echo ?? echoCancel;
+      const nextChannel = opts.channel ?? channel;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: buildAudioConstraints({ deviceId: nextDevice, echoCancel: nextEcho }),
+        });
+        rawAudioRef.current?.getTracks().forEach((t) => t.stop());
+        rawAudioRef.current = stream;
+        setLocalRawStream(stream);
+
+        const oldChain = chainRef.current;
+        const chain = createInstrumentChain(stream, nextChannel);
+        chain.setBoost(boost);
+        chain.setEnhanceEnabled(enhance);
+        chainRef.current = chain;
+        oldChain?.close();
+
+        const newTrack = chain.outputStream.getAudioTracks()[0];
+        newTrack.enabled = micOn;
+        replaceSenderTrack("audio", newTrack);
+
+        // The metronome was wired to the old chain — reset it
+        if (metroRef.current) {
+          metroRef.current.stop();
+          metroRef.current = null;
+          setMetroOn(false);
+          setBeat(-1);
+        }
+
+        setMicId(stream.getAudioTracks()[0]?.getSettings().deviceId ?? nextDevice ?? null);
+        setEchoCancel(nextEcho);
+        setChannel(nextChannel);
+        return true;
+      } catch {
+        notify("No se pudo cambiar la entrada de audio");
+        return false;
+      }
+    },
+    [micId, echoCancel, channel, boost, enhance, micOn, replaceSenderTrack, notify]
+  );
+
+  const selectMicDevice = useCallback(
+    async (id: string) => {
+      if (await rebuildAudio({ deviceId: id })) notify("Entrada de audio cambiada");
+    },
+    [rebuildAudio, notify]
+  );
+
+  const selectChannel = useCallback(
+    async (c: ChannelMode) => {
+      if (await rebuildAudio({ channel: c })) {
+        notify(
+          c === "stereo"
+            ? "Canal: estéreo"
+            : `Canal: solo ${c === "left" ? "izquierdo" : "derecho"}`
+        );
+      }
+    },
+    [rebuildAudio, notify]
+  );
+
   const toggleEchoCancel = useCallback(async () => {
     const next = !echoCancel;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { ...RAW_AUDIO_CONSTRAINTS, echoCancellation: next },
-      });
-      rawAudioRef.current?.getTracks().forEach((t) => t.stop());
-      rawAudioRef.current = stream;
-
-      const oldChain = chainRef.current;
-      const chain = createInstrumentChain(stream);
-      chain.setBoost(boost);
-      chain.setEnhanceEnabled(enhance);
-      chainRef.current = chain;
-      oldChain?.close();
-
-      const newTrack = chain.outputStream.getAudioTracks()[0];
-      newTrack.enabled = micOn;
-      replaceSenderTrack("audio", newTrack);
-      setEchoCancel(next);
-
-      // The metronome was wired to the old chain — reset it
-      if (metroRef.current) {
-        metroRef.current.stop();
-        metroRef.current = null;
-        setMetroOn(false);
-      }
+    if (await rebuildAudio({ echo: next })) {
       notify(
         next
-          ? "Cancelación de eco activada (para hablar sin audífonos)"
-          : "Cancelación de eco desactivada (máxima fidelidad)"
+          ? "Anti-eco activado (para hablar sin audífonos)"
+          : "Anti-eco desactivado (máxima fidelidad)"
       );
-    } catch {
-      notify("No se pudo cambiar el modo de micrófono");
     }
-  }, [echoCancel, boost, enhance, micOn, replaceSenderTrack, notify]);
+  }, [echoCancel, rebuildAudio, notify]);
 
   /** Tears down the dual-view canvas compositor (face + hands). */
   const stopDualComposite = useCallback(() => {
@@ -349,7 +437,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
       replaceSenderTrack("video", track);
       setLocalPreview(track);
       setSharing(true);
-      notify("Compartiendo pantalla (⌘⌥3 para detener)");
+      notify("Compartiendo pantalla");
     } catch {
       /* user cancelled the picker */
     }
@@ -444,7 +532,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         setLocalPreview(track);
         setUsingPhone(true);
         setShowPhoneQR(false);
-        notify("📱 Cámara del celular activada (⌘⌥1 para volver)");
+        notify("Cámara del celular activada");
         return;
       }
     }
@@ -471,8 +559,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
 
   /**
    * ⌘⌥4 — dual view: face cam + phone cam composited side by side on a
-   * canvas, sent as a single video track. The student sees your face AND
-   * your hands on the instrument at the same time.
+   * canvas, sent as a single video track.
    */
   const toggleDualView = useCallback(async () => {
     if (dualRef.current) {
@@ -530,7 +617,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     setLocalPreview(track);
     setDualActive(true);
     setUsingPhone(false);
-    notify("👥 Vista dual: cara + manos (⌘⌥4 para volver)");
+    notify("Vista dual: cara + manos");
   }, [
     connectPhoneCam,
     replaceSenderTrack,
@@ -552,17 +639,18 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         chain.ctx.destination,
         chain.destinationNode,
       ]);
+      metroRef.current.onBeat = (b) => setBeat(b);
     }
     if (metroRef.current.running) {
       metroRef.current.stop();
       setMetroOn(false);
+      setBeat(-1);
     } else {
       void chain.ctx.resume();
       metroRef.current.start(bpm);
       setMetroOn(true);
-      notify(`♩ Metrónomo compartido a ${bpm} BPM — ambos lo escuchan`);
     }
-  }, [bpm, notify]);
+  }, [bpm]);
 
   const changeTempo = useCallback((v: number) => {
     setBpm(v);
@@ -618,7 +706,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     const t = Math.round((Date.now() - recStartRef.current) / 1000);
     markersRef.current.push(t);
     setMarkerCount(markersRef.current.length);
-    notify(`🚩 Momento ${markersRef.current.length} marcado en ${formatTime(t)}`);
+    notify(`Momento ${markersRef.current.length} marcado en ${formatTime(t)}`);
   }, [notify]);
 
   const stopRecording = useCallback(async () => {
@@ -642,7 +730,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         a.download = name.replace(/\.webm$/i, "") + "_momentos.txt";
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
-        notify(`Grabación guardada con ${markers.length} momento(s) clave 🚩`);
+        notify(`Grabación guardada con ${markers.length} momento(s) clave`);
       } else {
         notify(`Grabación guardada: ${name}`);
       }
@@ -809,7 +897,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
               onClick={copyLink}
               className="rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-black hover:brightness-110"
             >
-              ✉️ Invitar estudiante (copiar enlace)
+              Invitar estudiante (copiar enlace)
             </button>
           )}
         </div>
@@ -824,27 +912,36 @@ export default function CallRoom({ roomId }: { roomId: string }) {
           <button
             onClick={copyLink}
             title="Copiar enlace de invitación"
-            className="rounded bg-white/10 px-2.5 py-1 text-xs hover:bg-white/20"
+            className="flex items-center gap-1.5 rounded bg-white/10 px-2.5 py-1 text-xs hover:bg-white/20"
           >
-            ✉️ Invitar · <span className="font-mono">{roomId}</span>
+            <SendIcon width={12} height={12} />
+            Invitar · <span className="font-mono">{roomId}</span>
           </button>
           <span className="text-xs text-gray-400">{statusLabel[status]}</span>
         </div>
         <div className="flex items-center gap-3">
           {recording && (
             <span className="rec-pulse flex items-center gap-1.5 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold">
-              ● REC{markerCount > 0 ? ` · 🚩${markerCount}` : ""}
+              ● REC{markerCount > 0 ? ` · ${markerCount} ⚑` : ""}
             </span>
           )}
           <button
             onClick={() => setShowHelp((v) => !v)}
-            className="rounded-full bg-white/10 px-2.5 py-1 text-xs hover:bg-white/20"
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-gray-300 hover:bg-white/20 hover:text-white"
             title="Atajos de teclado"
           >
-            ?
+            <HelpIcon width={15} height={15} />
           </button>
         </div>
       </div>
+
+      {/* Tuner */}
+      <TunerPanel
+        open={showTuner}
+        localStream={localRawStream}
+        remoteStream={remoteStream}
+        onClose={() => setShowTuner(false)}
+      />
 
       {/* Draggable self-view (PiP) */}
       <div
@@ -885,17 +982,14 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         <div className="absolute right-4 top-12 z-30 w-80 rounded-xl border border-gray-700 bg-panel/95 p-4 text-xs leading-relaxed shadow-2xl">
           <p className="mb-2 font-semibold text-gray-200">Atajos de teclado</p>
           <ul className="space-y-1 text-gray-300">
-            <li>⌘/Ctrl + ⌥/Alt + 1 — Cámara principal</li>
-            <li>⌘/Ctrl + ⌥/Alt + 2 — Cámara del celular 📱</li>
-            <li>⌘/Ctrl + ⌥/Alt + 3 — Compartir pantalla</li>
-            <li>⌘/Ctrl + ⌥/Alt + 4 — Vista dual: cara + manos 👥</li>
-            <li>⌘/Ctrl + ⌥/Alt + R — Iniciar grabación</li>
-            <li>⌘/Ctrl + ⌥/Alt + M — Marcar momento clave 🚩</li>
+            <li>{sc("1")} — Cámara principal</li>
+            <li>{sc("2")} — Cámara del celular</li>
+            <li>{sc("3")} — Compartir pantalla</li>
+            <li>{sc("4")} — Vista dual: cara + manos</li>
+            <li>{sc("R")} — Iniciar grabación</li>
+            <li>{sc("M")} — Marcar momento clave</li>
             <li>Pausa — Detener grabación y guardar</li>
           </ul>
-          <p className="mt-3 text-gray-400">
-            ♩ El metrónomo lo escuchan ambos, sincronizado con tu instrumento.
-          </p>
           <p className="mt-3 text-gray-500">
             El audio se transmite sin supresión de ruido (Opus estéreo 256
             kbps). Usa audífonos para evitar eco.
@@ -913,14 +1007,14 @@ export default function CallRoom({ roomId }: { roomId: string }) {
             className="w-[22rem] max-w-[90vw] rounded-2xl border border-gray-700 bg-panel p-6 text-center shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-lg font-semibold">📱 Tu celular como cámara</p>
+            <p className="text-lg font-semibold">Tu celular como cámara</p>
             <ol className="mt-3 space-y-1.5 text-left text-xs leading-relaxed text-gray-300">
               <li>1. Conecta el celular a la misma red WiFi.</li>
               <li>2. Escanea este código con la cámara del celular y abre el enlace.</li>
               <li>3. Apunta el celular a tus manos / instrumento.</li>
               <li>
-                4. Presiona <b>⌘⌥2</b> (Ctrl+Alt+2) para cambiar a esa cámara, y{" "}
-                <b>⌘⌥1</b> para volver.
+                4. Presiona <b>{sc("2")}</b> para cambiar a esa cámara, y{" "}
+                <b>{sc("1")}</b> para volver.
               </li>
             </ol>
             <div className="mt-4 flex justify-center">
@@ -966,21 +1060,24 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         <HotkeyButton
           onClick={toggleMic}
           active={micOn}
-          label={micOn ? "🎙️" : "🔇"}
+          label={micOn ? <MicIcon /> : <MicOffIcon />}
           name="Micrófono"
           description={micOn ? "Silencia tu micrófono." : "Reactiva tu micrófono."}
         />
         <HotkeyButton
           onClick={toggleCam}
           active={camOn}
-          label={camOn ? "📷" : "🚫"}
+          label={camOn ? <VideoIcon /> : <VideoOffIcon />}
           name="Cámara"
           description={camOn ? "Apaga tu video sin salir de la clase." : "Enciende tu video."}
         />
+
+        <Divider />
+
         <HotkeyButton
           onClick={() => void switchCamera(0)}
           active={true}
-          label="🎥"
+          label={<Badged n={1}><VideoIcon /></Badged>}
           name="Cámara principal"
           description="Vuelve a la cámara del computador (la que viene por defecto)."
           shortcut={sc("1")}
@@ -990,8 +1087,8 @@ export default function CallRoom({ roomId }: { roomId: string }) {
             phoneStreamRef.current ? void selectSecondCamera() : setShowPhoneQR(true)
           }
           active={!usingPhone}
-          highlight={usingPhone}
-          label="📱"
+          accent={usingPhone}
+          label={<Badged n={2}><PhoneIcon /></Badged>}
           name="Cámara del celular"
           description="Cambia a la cámara del celular. Si aún no está conectado, muestra el código QR para vincularlo."
           shortcut={sc("2")}
@@ -999,8 +1096,8 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         <HotkeyButton
           onClick={() => void toggleScreenShare()}
           active={!sharing}
-          highlight={sharing}
-          label="🖥️"
+          accent={sharing}
+          label={<Badged n={3}><ScreenIcon /></Badged>}
           name="Compartir pantalla"
           description="Muestra tu pantalla (partituras, apps). Presiona de nuevo para detener."
           shortcut={sc("3")}
@@ -1008,17 +1105,56 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         <HotkeyButton
           onClick={() => void toggleDualView()}
           active={!dualActive}
-          highlight={dualActive}
-          label="👥"
+          accent={dualActive}
+          label={<Badged n={4}><DualIcon /></Badged>}
           name="Vista dual"
           description="Tu cara y tus manos a la vez, lado a lado. Requiere el celular conectado."
           shortcut={sc("4")}
         />
+
+        <Divider />
+
+        <HotkeyButton
+          onClick={() => setShowTuner((v) => !v)}
+          active={!showTuner}
+          accent={showTuner}
+          label={<ForkIcon />}
+          name="Afinador"
+          description="Afinador cromático: detecta la nota y su desviación en cents. Sirve para ti o para el estudiante."
+        />
+        <div className="relative">
+          <HotkeyButton
+            onClick={() => setShowMetro((v) => !v)}
+            active={!showMetro && !metroOn}
+            accent={showMetro || metroOn}
+            label={<MetronomeIcon />}
+            name="Metrónomo"
+            description="Pulso compartido: lo escuchan ambos, sincronizado con tu instrumento. Tempo 40–208 BPM con tap tempo."
+          />
+          <MetronomePanel
+            open={showMetro}
+            on={metroOn}
+            bpm={bpm}
+            beat={beat}
+            onToggle={toggleMetronome}
+            onBpm={changeTempo}
+            onClose={() => setShowMetro(false)}
+          />
+        </div>
+
+        <Divider />
+
         <HotkeyButton
           onClick={() => (recording ? void stopRecording() : startRecording())}
-          active={!recording}
+          active={true}
           highlight={recording}
-          label={recording ? "⏹" : "⏺"}
+          label={
+            recording ? (
+              <StopIcon className="text-white" />
+            ) : (
+              <RecordIcon className="text-red-500" />
+            )
+          }
           name={recording ? "Detener y guardar" : "Grabar la clase"}
           description={
             recording
@@ -1031,68 +1167,45 @@ export default function CallRoom({ roomId }: { roomId: string }) {
           <HotkeyButton
             onClick={addMarker}
             active={true}
-            label="🚩"
+            label={<FlagIcon />}
             name="Marcar momento clave"
             description="Guarda el minuto actual; al final recibes la lista de momentos para repasar."
             shortcut={sc("M")}
           />
         )}
 
-        {/* Shared metronome */}
-        <div
-          className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs"
-          title="Metrónomo compartido: lo escuchan ambos, sincronizado con tu audio"
-        >
-          <button
-            onClick={toggleMetronome}
-            className={`font-semibold ${metroOn ? "text-accent" : ""}`}
-          >
-            {metroOn ? "⏸" : "▶"} ♩
-          </button>
-          <input
-            type="range"
-            min={40}
-            max={208}
-            step={1}
-            value={bpm}
-            onChange={(e) => changeTempo(Number(e.target.value))}
-            className="w-20 accent-[#e8b339]"
-          />
-          <span className="w-7 text-right tabular-nums">{bpm}</span>
-        </div>
+        <Divider />
 
-        {/* Instrument audio panel */}
-        <div className="flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-xs">
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input type="checkbox" checked={enhance} onChange={toggleEnhance} className="accent-[#e8b339]" />
-            Modo instrumento
-          </label>
-          <label className="flex items-center gap-1.5" title="Potencia del instrumento">
-            🎚
-            <input
-              type="range"
-              min={1}
-              max={4}
-              step={0.1}
-              value={boost}
-              onChange={(e) => changeBoost(Number(e.target.value))}
-              className="w-24 accent-[#e8b339]"
-            />
-            {boost.toFixed(1)}x
-          </label>
-          <label
-            className="flex cursor-pointer items-center gap-1.5 border-l border-white/20 pl-3"
-            title="Actívalo solo si no usas audífonos"
-          >
-            <input type="checkbox" checked={echoCancel} onChange={() => void toggleEchoCancel()} className="accent-[#e8b339]" />
-            Anti-eco
-          </label>
+        <div className="relative">
+          <HotkeyButton
+            onClick={() => setShowSettings((v) => !v)}
+            active={!showSettings}
+            accent={showSettings}
+            label={<SlidersIcon />}
+            name="Entrada de audio"
+            description="Elige micrófono o interfaz, canal (estéreo/izq/der), modo instrumento y anti-eco."
+          />
+          <AudioSettingsPanel
+            open={showSettings}
+            devices={audioDevices}
+            selectedDeviceId={micId}
+            channel={channel}
+            enhance={enhance}
+            boost={boost}
+            echoCancel={echoCancel}
+            onDevice={(id) => void selectMicDevice(id)}
+            onChannel={(c) => void selectChannel(c)}
+            onEnhance={toggleEnhance}
+            onBoost={changeBoost}
+            onEcho={() => void toggleEchoCancel()}
+            onClose={() => setShowSettings(false)}
+          />
         </div>
 
         <button
           onClick={hangUp}
           title="Salir de la clase"
-          className="rounded-full bg-red-600 px-5 py-2.5 text-sm font-semibold hover:bg-red-500"
+          className="ml-1 rounded-full bg-red-600 px-5 py-2.5 text-sm font-semibold hover:bg-red-500"
         >
           Salir
         </button>
@@ -1108,6 +1221,22 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   );
 }
 
+function Divider() {
+  return <span className="mx-1 h-7 w-px bg-white/15" />;
+}
+
+/** Wraps an icon with a small shortcut-number badge. */
+function Badged({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <span className="relative flex items-center justify-center">
+      {children}
+      <span className="absolute -bottom-1.5 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/70 text-[8px] font-bold text-accent">
+        {n}
+      </span>
+    </span>
+  );
+}
+
 /**
  * Round control button with a rich hover tooltip: action name, what it does,
  * and its keyboard shortcut (when it has one).
@@ -1116,6 +1245,7 @@ function HotkeyButton({
   onClick,
   active,
   highlight,
+  accent,
   label,
   name,
   description,
@@ -1123,8 +1253,11 @@ function HotkeyButton({
 }: {
   onClick: () => void;
   active: boolean;
+  /** Red state (recording, danger). */
   highlight?: boolean;
-  label: string;
+  /** Gold state (feature engaged: sharing, dual, panels). */
+  accent?: boolean;
+  label: React.ReactNode;
   name: string;
   description: string;
   shortcut?: string;
@@ -1134,12 +1267,14 @@ function HotkeyButton({
       <button
         onClick={onClick}
         aria-label={name}
-        className={`flex h-11 w-11 items-center justify-center rounded-full text-lg transition ${
+        className={`flex h-11 w-11 items-center justify-center rounded-full transition ${
           highlight
-            ? "bg-red-600 hover:bg-red-500"
-            : active
-              ? "bg-white/15 hover:bg-white/25"
-              : "bg-red-600/80 hover:bg-red-500"
+            ? "bg-red-600 text-white hover:bg-red-500"
+            : accent
+              ? "bg-accent text-black hover:brightness-110"
+              : active
+                ? "bg-white/15 text-gray-100 hover:bg-white/25"
+                : "bg-red-600/80 text-white hover:bg-red-500"
         }`}
       >
         {label}

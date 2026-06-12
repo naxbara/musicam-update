@@ -1,13 +1,16 @@
 /**
  * Audio engine for music lessons (MusiCam).
  *
- * Two key ideas:
+ * Key ideas:
  * 1. RAW capture — explicitly disable noise suppression, echo cancellation
  *    and auto gain control so instrument harmonics are not destroyed.
  * 2. Instrument boost — a gentle compressor + makeup gain chain (similar to
- *    what Zoom/Teams do for voice, but tuned for instruments) that lifts the
- *    instrument level without pumping artifacts.
+ *    what Zoom/Teams do for voice, but tuned for instruments).
+ * 3. Input selection — any microphone/interface, and channel pick (stereo /
+ *    left / right) for interfaces that carry the instrument on one channel.
  */
+
+export type ChannelMode = "stereo" | "left" | "right";
 
 export const RAW_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: false, // use headphones to avoid feedback
@@ -16,6 +19,18 @@ export const RAW_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   channelCount: { ideal: 2 },
   sampleRate: { ideal: 48000 },
 };
+
+/** Builds getUserMedia audio constraints for a device + echo setting. */
+export function buildAudioConstraints(opts: {
+  deviceId?: string | null;
+  echoCancel?: boolean;
+}): MediaTrackConstraints {
+  return {
+    ...RAW_AUDIO_CONSTRAINTS,
+    echoCancellation: opts.echoCancel ?? false,
+    ...(opts.deviceId ? { deviceId: { exact: opts.deviceId } } : {}),
+  };
+}
 
 export interface InstrumentChain {
   ctx: AudioContext;
@@ -31,12 +46,24 @@ export interface InstrumentChain {
 }
 
 /**
- * Builds: source -> [compressor] -> gain -> destination.
- * The compressor evens out dynamics; gain provides makeup/boost (1x–4x).
+ * Builds: source -> [channel pick] -> [compressor] -> gain -> destination.
  */
-export function createInstrumentChain(inputStream: MediaStream): InstrumentChain {
+export function createInstrumentChain(
+  inputStream: MediaStream,
+  channel: ChannelMode = "stereo"
+): InstrumentChain {
   const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
   const source = ctx.createMediaStreamSource(inputStream);
+
+  // Channel pick: route only the chosen channel (mono) when not stereo.
+  let input: AudioNode = source;
+  if (channel !== "stereo") {
+    const splitter = ctx.createChannelSplitter(2);
+    const mono = ctx.createGain();
+    source.connect(splitter);
+    splitter.connect(mono, channel === "left" ? 0 : 1);
+    input = mono;
+  }
 
   const compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -24;
@@ -54,13 +81,13 @@ export function createInstrumentChain(inputStream: MediaStream): InstrumentChain
   let enhanceEnabled = true;
 
   const rewire = () => {
-    source.disconnect();
+    input.disconnect();
     compressor.disconnect();
     if (enhanceEnabled) {
-      source.connect(compressor);
+      input.connect(compressor);
       compressor.connect(gain);
     } else {
-      source.connect(gain);
+      input.connect(gain);
     }
   };
   rewire();
@@ -80,6 +107,7 @@ export function createInstrumentChain(inputStream: MediaStream): InstrumentChain
     close() {
       try {
         source.disconnect();
+        input.disconnect();
         compressor.disconnect();
         gain.disconnect();
         void ctx.close();
@@ -113,7 +141,6 @@ export function hifiOpusSdp(sdp: string): string {
     const m = line.match(/^a=fmtp:(\d+) (.*)$/);
     if (!m || !opusPayloads.has(m[1])) return line;
     fmtpSeen.add(m[1]);
-    // Drop any conflicting params, then append ours
     const kept = m[2]
       .split(";")
       .map((p) => p.trim())
@@ -125,7 +152,6 @@ export function hifiOpusSdp(sdp: string): string {
     return `a=fmtp:${m[1]} ${[...kept, HIFI].join(";")}`;
   });
 
-  // Add fmtp lines for opus payloads that had none
   for (const pt of Array.from(opusPayloads)) {
     if (fmtpSeen.has(pt)) continue;
     const idx = out.findIndex((l) => l.startsWith(`a=rtpmap:${pt} `));

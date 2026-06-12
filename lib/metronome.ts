@@ -4,12 +4,14 @@
  * travels with the same latency as the instrument, keeping them musically
  * aligned on the student's side.
  *
- * Uses the classic look-ahead scheduler for rock-solid timing.
+ * Uses the classic look-ahead scheduler for rock-solid timing, and exposes
+ * an onBeat callback (fired in sync with the audible click) for visual
+ * beat indicators.
  */
 
 const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD_S = 0.12;
-const BEATS_PER_MEASURE = 4;
+export const BEATS_PER_MEASURE = 4;
 
 export class Metronome {
   private ctx: AudioContext;
@@ -18,6 +20,9 @@ export class Metronome {
   private nextTime = 0;
   private beat = 0;
   private bpm = 92;
+
+  /** Fired (approximately) when each click becomes audible. 0 = accent. */
+  onBeat: ((beatIndex: number) => void) | null = null;
 
   constructor(ctx: AudioContext, outputs: AudioNode[]) {
     this.ctx = ctx;
@@ -48,7 +53,10 @@ export class Metronome {
     this.nextTime = this.ctx.currentTime + 0.1;
     this.timer = window.setInterval(() => {
       while (this.nextTime < this.ctx.currentTime + SCHEDULE_AHEAD_S) {
-        this.click(this.nextTime, this.beat % BEATS_PER_MEASURE === 0);
+        const beatIndex = this.beat % BEATS_PER_MEASURE;
+        this.click(this.nextTime, beatIndex === 0);
+        const delayMs = Math.max(0, (this.nextTime - this.ctx.currentTime) * 1000);
+        window.setTimeout(() => this.onBeat?.(beatIndex), delayMs);
         this.nextTime += 60 / this.bpm;
         this.beat += 1;
       }
