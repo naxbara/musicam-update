@@ -62,7 +62,7 @@ Registro de todo lo construido, decidido y configurado. Orden cronológico.
 - [ ] Activar 2FA/passkey en la cuenta de Vercel (se omitió durante el setup).
 - [ ] Afinador: ¿modo de referencia configurable (A=440/442)?
 - [ ] Si se suman más profesores: agregarlos a la allowlist (código) y como test users (GCP), o publicar la app OAuth.
-- [ ] Tutorial PDF: actualizarlo con afinador, selector de audio y login.
+- [x] Tutorial PDF: actualizado a v2 con afinador, selector de audio, metrónomo nuevo, barra de controles y login (2026-06-11).
 
 ---
 
