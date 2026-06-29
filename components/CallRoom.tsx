@@ -3,7 +3,7 @@
 // MusiCam call room
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Peer, { MediaConnection } from "peerjs";
+import Peer, { MediaConnection, DataConnection } from "peerjs";
 import {
   buildAudioConstraints,
   createInstrumentChain,
@@ -16,7 +16,11 @@ import { Metronome } from "@/lib/metronome";
 import TunerPanel from "@/components/TunerPanel";
 import MetronomePanel from "@/components/MetronomePanel";
 import AudioSettingsPanel from "@/components/AudioSettingsPanel";
+import ChordOverlay, { DEFAULT_CHORD_BOX, type ChordBox } from "@/components/ChordOverlay";
+import ChatPanel, { type ChatMessage } from "@/components/ChatPanel";
 import {
+  ChatIcon,
+  ChordIcon,
   DualIcon,
   FlagIcon,
   ForkIcon,
@@ -37,8 +41,12 @@ import {
 type Status = "init" | "waiting" | "connecting" | "connected" | "ended" | "error";
 
 const PIP_KEY = "musicam-pip-pos";
+const PIP_SIZE_KEY = "musicam-pip-size";
+const CHORD_KEY = "musicam-chord-style";
 const PIP_W = 224;
 const PIP_H = 126;
+const PIP_MIN_W = 140;
+const PIP_ASPECT = PIP_W / PIP_H; // keep 16:9-ish on resize
 
 function formatTime(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
@@ -46,7 +54,13 @@ function formatTime(totalSeconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-export default function CallRoom({ roomId }: { roomId: string }) {
+export default function CallRoom({
+  roomId,
+  displayName = "Invitado",
+}: {
+  roomId: string;
+  displayName?: string;
+}) {
   const router = useRouter();
 
   // Stable peer IDs for this session
@@ -56,6 +70,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   // --- refs (mutable call machinery) ---
   const peerRef = useRef<Peer | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
+  const dataConnRef = useRef<DataConnection | null>(null);
   const chainRef = useRef<InstrumentChain | null>(null);
   const rawAudioRef = useRef<MediaStream | null>(null);
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
@@ -76,6 +91,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const pipRef = useRef<HTMLDivElement>(null);
+  const showChatRef = useRef(false);
 
   // --- state ---
   const [status, setStatus] = useState<Status>("init");
@@ -93,6 +109,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const [micId, setMicId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
+  const [pipSize, setPipSize] = useState<{ w: number; h: number }>({ w: PIP_W, h: PIP_H });
   const [showHelp, setShowHelp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTuner, setShowTuner] = useState(false);
@@ -106,6 +123,13 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const [dualActive, setDualActive] = useState(false);
   const [markerCount, setMarkerCount] = useState(0);
   const [isMac, setIsMac] = useState(false);
+  // Data-channel features (shared between teacher and student)
+  const [isHost, setIsHost] = useState(false);
+  const [dataConnected, setDataConnected] = useState(false);
+  const [chordBox, setChordBox] = useState<ChordBox>(DEFAULT_CHORD_BOX);
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [unread, setUnread] = useState(0);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -158,6 +182,46 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     [notify]
   );
 
+  // --------------------------------------------------------- data channel
+
+  /** Send a JSON message to the other participant (chords / chat). */
+  const sendData = useCallback((obj: unknown) => {
+    const conn = dataConnRef.current;
+    if (conn && conn.open) conn.send(obj);
+  }, []);
+
+  /** Wire a data connection: dispatch chord-box and chat messages. */
+  const wireData = useCallback((conn: DataConnection) => {
+    dataConnRef.current = conn;
+    const markOpen = () => setDataConnected(true);
+    if (conn.open) markOpen();
+    conn.on("open", markOpen);
+    conn.on("data", (raw) => {
+      const msg = raw as {
+        type?: string;
+        box?: ChordBox;
+        from?: string;
+        text?: string;
+      };
+      if (msg?.type === "chord" && msg.box) {
+        setChordBox(msg.box);
+      } else if (msg?.type === "chat" && typeof msg.text === "string") {
+        setChatMessages((prev) => [
+          ...prev,
+          { from: msg.from || "Estudiante", text: msg.text!, ts: Date.now(), mine: false },
+        ]);
+        if (!showChatRef.current) setUnread((n) => n + 1);
+      }
+    });
+    conn.on("close", () => {
+      dataConnRef.current = null;
+      setDataConnected(false);
+    });
+    conn.on("error", () => {
+      /* ignore — media call stays up */
+    });
+  }, []);
+
   // ---------------------------------------------------------- media + peer
 
   useEffect(() => {
@@ -195,11 +259,13 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         const sdpOpts = { sdpTransform: hifiOpusSdp };
 
         const startAsGuest = () => {
+          setIsHost(false);
           const guest = new Peer();
           peerRef.current = guest;
           guest.on("open", () => {
             const call = guest.call(hostId, outStreamRef.current!, sdpOpts);
             wireCall(call);
+            wireData(guest.connect(hostId, { reliable: true }));
           });
           guest.on("error", (err: any) => {
             if (err.type === "peer-unavailable") {
@@ -223,11 +289,15 @@ export default function CallRoom({ roomId }: { roomId: string }) {
 
         const host = new Peer(hostId);
         peerRef.current = host;
-        host.on("open", () => setStatus("waiting"));
+        host.on("open", () => {
+          setIsHost(true);
+          setStatus("waiting");
+        });
         host.on("call", (call) => {
           call.answer(outStreamRef.current!, sdpOpts);
           wireCall(call);
         });
+        host.on("connection", (conn) => wireData(conn));
         host.on("error", (err: any) => {
           if (err.type === "unavailable-id") {
             // Room already has a host — join as guest
@@ -253,6 +323,7 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     return () => {
       cancelled = true;
       navigator.mediaDevices.removeEventListener?.("devicechange", refreshAudioDevices);
+      dataConnRef.current?.close();
       callRef.current?.close();
       peerRef.current?.destroy();
       chainRef.current?.close();
@@ -272,15 +343,24 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     }
   }, [remoteStream]);
 
-  // Restore PiP position
+  // Restore PiP position + size
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(PIP_KEY);
-      if (saved) setPipPos(JSON.parse(saved));
+      const savedPos = localStorage.getItem(PIP_KEY);
+      if (savedPos) setPipPos(JSON.parse(savedPos));
+      const savedSize = localStorage.getItem(PIP_SIZE_KEY);
+      if (savedSize) setPipSize(JSON.parse(savedSize));
+      const savedChord = localStorage.getItem(CHORD_KEY);
+      if (savedChord) setChordBox((b) => ({ ...b, ...JSON.parse(savedChord) }));
     } catch {
       /* ignore */
     }
   }, []);
+
+  // Keep a ref of the chat-panel state for the (stable) data handler
+  useEffect(() => {
+    showChatRef.current = showChat;
+  }, [showChat]);
 
   // Platform detection for shortcut labels (⌘⌥ on Mac, Ctrl+Alt elsewhere)
   useEffect(() => {
@@ -657,6 +737,50 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     metroRef.current?.setBpm(v);
   }, []);
 
+  // ------------------------------------------------------ chords & chat
+
+  /** Update the chord box and mirror it to the student. */
+  const updateChordBox = useCallback(
+    (box: ChordBox) => {
+      setChordBox(box);
+      sendData({ type: "chord", box });
+      try {
+        // Remember style/position (not the text) for the next class.
+        const { color, fontSize, opacity, x, y, w, h } = box;
+        localStorage.setItem(
+          CHORD_KEY,
+          JSON.stringify({ color, fontSize, opacity, x, y, w, h })
+        );
+      } catch {
+        /* ignore */
+      }
+    },
+    [sendData]
+  );
+
+  const toggleChords = useCallback(() => {
+    if (!isHost) return; // only the teacher edits the chord box
+    updateChordBox({ ...chordBox, visible: !chordBox.visible });
+  }, [isHost, chordBox, updateChordBox]);
+
+  const sendChat = useCallback(
+    (text: string) => {
+      setChatMessages((prev) => [
+        ...prev,
+        { from: displayName, text, ts: Date.now(), mine: true },
+      ]);
+      sendData({ type: "chat", from: displayName, text });
+    },
+    [displayName, sendData]
+  );
+
+  const toggleChat = useCallback(() => {
+    setShowChat((v) => {
+      if (!v) setUnread(0);
+      return !v;
+    });
+  }, []);
+
   // Generate the QR for the phone-camera link when the overlay opens
   useEffect(() => {
     if (!showPhoneQR) return;
@@ -672,14 +796,14 @@ export default function CallRoom({ roomId }: { roomId: string }) {
   const pipCorner = useCallback((): "tl" | "tr" | "bl" | "br" => {
     const c = containerRef.current;
     if (!c || !pipPos) return "br";
-    const midX = (c.clientWidth - PIP_W) / 2;
-    const midY = (c.clientHeight - PIP_H) / 2;
+    const midX = (c.clientWidth - pipSize.w) / 2;
+    const midY = (c.clientHeight - pipSize.h) / 2;
     return `${pipPos.y < midY ? "t" : "b"}${pipPos.x < midX ? "l" : "r"}` as
       | "tl"
       | "tr"
       | "bl"
       | "br";
-  }, [pipPos]);
+  }, [pipPos, pipSize]);
 
   const startRecording = useCallback(() => {
     if (recorderRef.current.isRecording) return;
@@ -747,6 +871,8 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     selectSecondCamera,
     toggleScreenShare,
     toggleDualView,
+    toggleChords,
+    toggleChat,
     startRecording,
     stopRecording,
     addMarker,
@@ -756,6 +882,8 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     selectSecondCamera,
     toggleScreenShare,
     toggleDualView,
+    toggleChords,
+    toggleChat,
     startRecording,
     stopRecording,
     addMarker,
@@ -787,6 +915,14 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         case "Digit4":
           e.preventDefault();
           void a.toggleDualView();
+          break;
+        case "Digit5":
+          e.preventDefault();
+          a.toggleChords();
+          break;
+        case "KeyC":
+          e.preventDefault();
+          a.toggleChat();
           break;
         case "KeyR":
           e.preventDefault();
@@ -821,11 +957,11 @@ export default function CallRoom({ roomId }: { roomId: string }) {
     const bounds = c.getBoundingClientRect();
     const x = Math.min(
       Math.max(e.clientX - bounds.left - drag.dx, 8),
-      bounds.width - PIP_W - 8
+      bounds.width - pipSize.w - 8
     );
     const y = Math.min(
       Math.max(e.clientY - bounds.top - drag.dy, 8),
-      bounds.height - PIP_H - 8
+      bounds.height - pipSize.h - 8
     );
     setPipPos({ x, y });
   };
@@ -839,6 +975,37 @@ export default function CallRoom({ roomId }: { roomId: string }) {
       }
     }
     dragRef.current = null;
+  };
+
+  // PiP resize (stretch from the bottom-right corner, 16:9 kept)
+  const pipResizeRef = useRef<{ sx: number; w: number } | null>(null);
+
+  const onPipResizeDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    pipResizeRef.current = { sx: e.clientX, w: pipSize.w };
+  };
+
+  const onPipResizeMove = (e: React.PointerEvent) => {
+    const r = pipResizeRef.current;
+    const c = containerRef.current;
+    if (!r || !c) return;
+    const bounds = c.getBoundingClientRect();
+    const maxW = bounds.width * 0.45;
+    const w = Math.min(Math.max(r.w + (e.clientX - r.sx), PIP_MIN_W), maxW);
+    const h = Math.round(w / PIP_ASPECT);
+    setPipSize({ w: Math.round(w), h });
+  };
+
+  const onPipResizeUp = () => {
+    if (pipResizeRef.current) {
+      try {
+        localStorage.setItem(PIP_SIZE_KEY, JSON.stringify(pipSize));
+      } catch {
+        /* ignore */
+      }
+    }
+    pipResizeRef.current = null;
   };
 
   // --------------------------------------------------------------- leave
@@ -943,22 +1110,40 @@ export default function CallRoom({ roomId }: { roomId: string }) {
         onClose={() => setShowTuner(false)}
       />
 
-      {/* Draggable self-view (PiP) */}
+      {/* Chord text box (teacher edits, student sees it read-only) */}
+      <ChordOverlay
+        box={chordBox}
+        editable={isHost}
+        containerRef={containerRef}
+        onChange={updateChordBox}
+        onClose={() => updateChordBox({ ...chordBox, visible: false })}
+      />
+
+      {/* In-call chat */}
+      <ChatPanel
+        open={showChat}
+        messages={chatMessages}
+        connected={dataConnected}
+        onSend={sendChat}
+        onClose={() => setShowChat(false)}
+      />
+
+      {/* Draggable + resizable self-view (PiP) */}
       <div
         ref={pipRef}
         onPointerDown={onPipPointerDown}
         onPointerMove={onPipPointerMove}
         onPointerUp={onPipPointerUp}
-        style={{ ...pipStyle, width: PIP_W, height: PIP_H }}
+        style={{ ...pipStyle, width: pipSize.w, height: pipSize.h }}
         className="absolute z-20 cursor-grab touch-none select-none overflow-hidden rounded-xl border-2 border-accent/70 shadow-xl active:cursor-grabbing"
-        title="Arrástrame para moverme"
+        title="Arrástrame para moverme · estira la esquina para redimensionar"
       >
         <video
           ref={localVideoRef}
           autoPlay
           playsInline
           muted
-          className="h-full w-full object-cover"
+          className={`h-full w-full ${usingPhone ? "object-contain" : "object-cover"}`}
         />
         {!camOn && !sharing && (
           <div className="absolute inset-0 flex items-center justify-center bg-panel text-xs text-gray-400">
@@ -975,6 +1160,14 @@ export default function CallRoom({ roomId }: { roomId: string }) {
                 ? " · celular"
                 : ""}
         </span>
+        {/* Resize handle */}
+        <span
+          onPointerDown={onPipResizeDown}
+          onPointerMove={onPipResizeMove}
+          onPointerUp={onPipResizeUp}
+          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none rounded-tl-md bg-accent/80"
+          title="Estira para cambiar el tamaño"
+        />
       </div>
 
       {/* Help overlay */}
@@ -986,6 +1179,8 @@ export default function CallRoom({ roomId }: { roomId: string }) {
             <li>{sc("2")} — Cámara del celular</li>
             <li>{sc("3")} — Compartir pantalla</li>
             <li>{sc("4")} — Vista dual: cara + manos</li>
+            <li>{sc("5")} — Acordes (caja de texto)</li>
+            <li>{sc("C")} — Chat</li>
             <li>{sc("R")} — Iniciar grabación</li>
             <li>{sc("M")} — Marcar momento clave</li>
             <li>Pausa — Detener grabación y guardar</li>
@@ -1111,6 +1306,17 @@ export default function CallRoom({ roomId }: { roomId: string }) {
           description="Tu cara y tus manos a la vez, lado a lado. Requiere el celular conectado."
           shortcut={sc("4")}
         />
+        {isHost && (
+          <HotkeyButton
+            onClick={toggleChords}
+            active={!chordBox.visible}
+            accent={chordBox.visible}
+            label={<Badged n={5}><ChordIcon /></Badged>}
+            name="Acordes"
+            description="Caja de texto sobre el video para escribir acordes. Arrástrala, estírala y ajusta color/tamaño/transparencia; el estudiante la ve igual."
+            shortcut={sc("5")}
+          />
+        )}
 
         <Divider />
 
@@ -1200,6 +1406,23 @@ export default function CallRoom({ roomId }: { roomId: string }) {
             onEcho={() => void toggleEchoCancel()}
             onClose={() => setShowSettings(false)}
           />
+        </div>
+
+        <div className="relative">
+          <HotkeyButton
+            onClick={toggleChat}
+            active={!showChat}
+            accent={showChat}
+            label={<ChatIcon />}
+            name="Chat"
+            description="Mensajes de texto con el otro participante durante la clase."
+            shortcut={sc("C")}
+          />
+          {unread > 0 && !showChat && (
+            <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+              {unread}
+            </span>
+          )}
         </div>
 
         <button

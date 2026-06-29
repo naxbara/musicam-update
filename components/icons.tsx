@@ -156,6 +156,22 @@ export const LogoutIcon = (p: P) => (
   </Svg>
 );
 
+export const ChordIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M5 14.5V4l13-2v10.5" />
+    <circle cx="5" cy="16.5" r="2.5" />
+    <circle cx="18" cy="14.5" r="2.5" />
+    <line x1="9" y1="20.5" x2="15" y2="20.5" />
+    <line x1="12" y1="22" x2="12" y2="19" />
+  </Svg>
+);
+
+export const ChatIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.5V17H4a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 4 5.5z" />
+  </Svg>
+);
+
 /** Official multicolor Google "G" mark. */
 export const GoogleIcon = (p: P) => (
   <svg viewBox="0 0 24 24" width={18} height={18} aria-hidden="true" {...p}>

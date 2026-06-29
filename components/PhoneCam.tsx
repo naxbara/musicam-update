@@ -20,6 +20,18 @@ export default function PhoneCam({ roomId }: { roomId: string }) {
 
   const [status, setStatus] = useState<CamStatus>("init");
   const [facing, setFacing] = useState<"environment" | "user">("environment");
+  const [orientation, setOrientation] = useState<"landscape" | "portrait">("landscape");
+
+  // Camera constraints for a given facing + orientation. Portrait swaps the
+  // ideal dimensions (useful for tall instruments like a piano keyboard or a
+  // standing guitarist); landscape is the default (16:9).
+  const videoConstraints = (
+    f: "environment" | "user",
+    o: "landscape" | "portrait"
+  ): MediaTrackConstraints =>
+    o === "portrait"
+      ? { facingMode: f, width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9 / 16 } }
+      : { facingMode: f, width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 16 / 9 } };
 
   // Keep the screen awake while streaming
   useEffect(() => {
@@ -48,11 +60,7 @@ export default function PhoneCam({ roomId }: { roomId: string }) {
     async function setup() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
+          video: videoConstraints("environment", "landscape"),
           audio: false, // audio travels through the teacher's mic — avoids echo
         });
         if (cancelled) {
@@ -93,20 +101,19 @@ export default function PhoneCam({ roomId }: { roomId: string }) {
     };
   }, [roomId]);
 
-  const flipCamera = async () => {
-    const next = facing === "environment" ? "user" : "environment";
+  // Re-acquire the camera with new facing/orientation and live-swap the track
+  // on the active call, so the teacher sees the change without reconnecting.
+  const restart = async (
+    nextFacing: "environment" | "user",
+    nextOrientation: "landscape" | "portrait"
+  ) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: next,
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
+        video: videoConstraints(nextFacing, nextOrientation),
         audio: false,
       });
       const newTrack = stream.getVideoTracks()[0];
 
-      // Live-swap the track on the active call, if any
       const sender = callRef.current?.peerConnection
         ?.getSenders()
         .find((s) => s.track?.kind === "video");
@@ -115,11 +122,18 @@ export default function PhoneCam({ roomId }: { roomId: string }) {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
-      setFacing(next);
+      setFacing(nextFacing);
+      setOrientation(nextOrientation);
     } catch {
       /* keep current camera */
     }
   };
+
+  const flipCamera = () =>
+    restart(facing === "environment" ? "user" : "environment", orientation);
+
+  const toggleOrientation = () =>
+    restart(facing, orientation === "landscape" ? "portrait" : "landscape");
 
   const banner: Record<CamStatus, { text: string; cls: string }> = {
     init: { text: "Activando cámara…", cls: "bg-gray-700" },
@@ -160,12 +174,21 @@ export default function PhoneCam({ roomId }: { roomId: string }) {
         <span className="text-xs text-gray-300">
           MusiCam · sala <span className="font-mono">{roomId}</span>
         </span>
-        <button
-          onClick={() => void flipCamera()}
-          className="rounded-full bg-white/15 px-4 py-2 text-sm text-white hover:bg-white/25"
-        >
-          🔄 Girar cámara
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void toggleOrientation()}
+            className="rounded-full bg-white/15 px-4 py-2 text-sm text-white hover:bg-white/25"
+            title="Cambia entre horizontal (guitarra) y vertical (piano)"
+          >
+            {orientation === "landscape" ? "📐 Vertical" : "📐 Horizontal"}
+          </button>
+          <button
+            onClick={() => void flipCamera()}
+            className="rounded-full bg-white/15 px-4 py-2 text-sm text-white hover:bg-white/25"
+          >
+            🔄 Girar cámara
+          </button>
+        </div>
       </div>
     </div>
   );

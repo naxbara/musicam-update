@@ -3,17 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn, signOut } from "next-auth/react";
+import { createClassLink } from "@/app/actions";
 import { GoogleIcon, LogoutIcon, NoteIcon } from "@/components/icons";
-
-/**
- * Unique link per session: musical note + random suffix, e.g. "sol-x4k29p".
- */
-function generateSessionCode(): string {
-  const notes = ["do", "re", "mi", "fa", "sol", "la", "si"];
-  const note = notes[Math.floor(Math.random() * notes.length)];
-  const suffix = Math.random().toString(36).slice(2, 8);
-  return `${note}-${suffix}`;
-}
 
 export default function Lobby({
   authConfigured,
@@ -26,14 +17,35 @@ export default function Lobby({
 }) {
   const router = useRouter();
   const [joinCode, setJoinCode] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const canCreate = !authConfigured || teacher;
-  const createClass = () => router.push(`/room/${generateSessionCode()}`);
 
+  const createClass = async () => {
+    setCreating(true);
+    try {
+      const url = await createClassLink();
+      router.push(url);
+    } catch {
+      setCreating(false);
+    }
+  };
+
+  // Accept either a full invite link (keeps the ?t= signature) or a bare code.
   const joinRoom = (e: React.FormEvent) => {
     e.preventDefault();
-    const code = joinCode.trim().toLowerCase();
-    if (code) router.push(`/room/${encodeURIComponent(code)}`);
+    const raw = joinCode.trim();
+    if (!raw) return;
+    if (raw.includes("/room/")) {
+      try {
+        const u = new URL(raw, window.location.origin);
+        router.push(u.pathname + u.search);
+        return;
+      } catch {
+        /* fall through to bare-code handling */
+      }
+    }
+    router.push(`/room/${encodeURIComponent(raw.toLowerCase())}`);
   };
 
   return (
@@ -71,57 +83,67 @@ export default function Lobby({
         </p>
       </div>
 
-      <div className="flex w-full max-w-sm flex-col gap-4">
-        {canCreate ? (
-          <>
-            <button
-              onClick={createClass}
-              className="rounded-xl bg-accent px-6 py-5 text-lg font-semibold text-black transition hover:brightness-110"
-            >
-              Iniciar nueva clase
-            </button>
-            <p className="text-center text-xs text-gray-500">
-              Se crea un enlace único para esta sesión. Dentro de la sala, usa{" "}
-              <span className="text-gray-300">“Invitar estudiante”</span> para
-              enviárselo.
-            </p>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => void signIn("google")}
-              className="flex items-center justify-center gap-3 rounded-xl border border-gray-600 bg-white px-6 py-4 text-base font-semibold text-gray-800 transition hover:brightness-95"
-            >
-              <GoogleIcon />
-              Iniciar sesión como profesor
-            </button>
-            <p className="text-center text-xs text-gray-500">
-              Crear clases requiere una cuenta de profesor autorizada.
-              <br />
-              ¿Eres estudiante? Entra abajo con el código que te enviaron.
-            </p>
-          </>
-        )}
+      {/* Two clear paths: teacher (create) and student (join) */}
+      <div className="grid w-full max-w-3xl gap-4 sm:grid-cols-2">
+        {/* Teacher */}
+        <section className="flex flex-col gap-3 rounded-2xl border border-gray-800 bg-panel p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
+            Profesor
+          </h2>
+          {canCreate ? (
+            <>
+              <button
+                onClick={() => void createClass()}
+                disabled={creating}
+                className="rounded-xl bg-accent px-6 py-5 text-lg font-semibold text-black transition hover:brightness-110 disabled:opacity-60"
+              >
+                {creating ? "Creando…" : "Crear clase"}
+              </button>
+              <p className="text-xs text-gray-500">
+                Se genera un enlace único y firmado para esta sesión. Dentro de
+                la sala, usa <span className="text-gray-300">“Invitar
+                estudiante”</span> para enviárselo.
+              </p>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => void signIn("google")}
+                className="flex items-center justify-center gap-3 rounded-xl border border-gray-600 bg-white px-6 py-4 text-base font-semibold text-gray-800 transition hover:brightness-95"
+              >
+                <GoogleIcon />
+                Iniciar sesión con Google
+              </button>
+              <p className="text-xs text-gray-500">
+                Crear clases requiere una cuenta de profesor autorizada.
+              </p>
+            </>
+          )}
+        </section>
 
-        <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
-          <div className="h-px flex-1 bg-gray-700" /> ¿te invitaron? entra con
-          el código <div className="h-px flex-1 bg-gray-700" />
-        </div>
-
-        <form onSubmit={joinRoom} className="flex gap-2">
-          <input
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value)}
-            placeholder="ej: sol-x4k29p"
-            className="flex-1 rounded-xl border border-gray-700 bg-panel px-4 py-3 text-sm outline-none focus:border-accent"
-          />
-          <button
-            type="submit"
-            className="rounded-xl border border-gray-600 px-5 py-3 text-sm font-medium transition hover:border-accent hover:text-accent"
-          >
-            Entrar
-          </button>
-        </form>
+        {/* Student */}
+        <section className="flex flex-col gap-3 rounded-2xl border border-gray-800 bg-panel p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
+            Estudiante
+          </h2>
+          <form onSubmit={joinRoom} className="flex flex-col gap-3">
+            <input
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
+              placeholder="Pega el enlace que te envió tu profesor"
+              className="rounded-xl border border-gray-700 bg-stage px-4 py-3 text-sm outline-none focus:border-accent"
+            />
+            <button
+              type="submit"
+              className="rounded-xl border border-gray-600 px-5 py-3 text-sm font-medium transition hover:border-accent hover:text-accent"
+            >
+              Entrar a la clase
+            </button>
+          </form>
+          <p className="text-xs text-gray-500">
+            No necesitas cuenta: entra con el enlace de invitación.
+          </p>
+        </section>
       </div>
 
       <div className="grid max-w-2xl gap-3 text-xs text-gray-400 sm:grid-cols-3">

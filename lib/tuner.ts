@@ -3,8 +3,9 @@
  * AnalyserNode. Works on any MediaStream — your mic or the student's audio.
  */
 
+// American note names (clave americana): C, D, E, F, G, A, B.
 const NOTE_NAMES = [
-  "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si",
+  "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
 export interface PitchReading {
@@ -18,16 +19,24 @@ export interface PitchReading {
 function autoCorrelate(buf: Float32Array, sampleRate: number): number {
   const SIZE = buf.length;
 
-  // Signal gate: ignore near-silence
+  // Signal gate: ignore near-silence. Also track the peak amplitude so the
+  // trimming threshold can adapt to soft instruments (a fixed threshold was
+  // discarding almost the whole window and breaking detection).
   let rms = 0;
-  for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+  let maxAbs = 0;
+  for (let i = 0; i < SIZE; i++) {
+    const v = buf[i];
+    rms += v * v;
+    const a = Math.abs(v);
+    if (a > maxAbs) maxAbs = a;
+  }
   rms = Math.sqrt(rms / SIZE);
-  if (rms < 0.008) return -1;
+  if (rms < 0.005) return -1;
 
-  // Trim leading/trailing low-level samples
+  // Trim leading/trailing low-level samples, relative to this frame's peak.
+  const threshold = Math.max(0.02, 0.2 * maxAbs);
   let r1 = 0;
   let r2 = SIZE - 1;
-  const threshold = 0.2;
   for (let i = 0; i < SIZE / 2; i++) {
     if (Math.abs(buf[i]) < threshold) r1 = i;
     else break;
@@ -38,7 +47,7 @@ function autoCorrelate(buf: Float32Array, sampleRate: number): number {
   }
   const sliced = buf.slice(r1, r2);
   const N = sliced.length;
-  if (N < 64) return -1;
+  if (N < 128) return -1;
 
   // Autocorrelation
   const c = new Float32Array(N);
@@ -48,16 +57,21 @@ function autoCorrelate(buf: Float32Array, sampleRate: number): number {
     c[lag] = sum;
   }
 
-  // Skip the first descending slope, then find the global peak
+  // Skip the first descending slope, then pick the FIRST strong peak (>=90%
+  // of the zero-lag energy) rather than the global maximum. This avoids the
+  // common octave error where a later, slightly taller peak is chosen.
   let d = 0;
   while (d < N - 1 && c[d] > c[d + 1]) d++;
-  let maxVal = -1;
+  const peakThreshold = 0.9 * c[0];
   let maxPos = -1;
+  let maxVal = -1;
   for (let i = d; i < N; i++) {
     if (c[i] > maxVal) {
       maxVal = c[i];
       maxPos = i;
     }
+    // Once we pass a clear local maximum above the threshold, lock it in.
+    if (maxVal >= peakThreshold && i > maxPos && c[i] < maxVal) break;
   }
   if (maxPos <= 0) return -1;
 

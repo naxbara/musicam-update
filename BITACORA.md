@@ -55,6 +55,33 @@ Registro de todo lo construido, decidido y configurado. Orden cronológico.
 - **Vercel env vars** (Production + Preview; Development no admite variables sensitive): `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`. Redeploy manual para tomarlas. ⚠️ Los valores NO están en el repo (público); para desarrollo local usar `.env.local` (gitignoreado).
 - Primera vez que un profesor entra: Google muestra "app no verificada" → **Continuar** (normal en modo testing).
 
+## Sesión 3 — 2026-06-28 · Pulido de la sala (7 mejoras)
+
+Pedidas por Rodrigo y Sebastián. Infra nueva clave: **canal de datos PeerJS** (`DataConnection`) entre profesor y estudiante — antes solo había `MediaConnection`. Lo comparten acordes y chat.
+
+1. **PiP redimensionable** (`CallRoom`): handle en la esquina inferior-derecha; estira manteniendo 16:9 (mín 140px, máx 45% del ancho). Tamaño persistido en `localStorage` (`musicam-pip-size`), aparte de la posición.
+2. **Acordes (⌘⌥5)** (`ChordOverlay`): caja de texto sobre el video que el profesor escribe, **mueve y estira con el mouse**, con mini-toolbar de fuente (color, tamaño, transparencia). Texto + posición + tamaño + estilo se **sincronizan al estudiante** por el canal de datos (él la ve en solo lectura). Estilo/posición recordados en `localStorage` (`musicam-chord-style`). Solo el host (profesor) edita.
+3. **Afinador arreglado + notación americana** (`lib/tuner.ts`): `NOTE_NAMES` ahora C–B (clave americana). Bug de detección: el recorte usaba umbral fijo `0.2` que descartaba casi toda la señal → ahora **adaptativo** (`0.2 × pico`), gate RMS bajado a `0.005`, y selección de pico anti-octava (primer pico ≥90% de la energía).
+4. **Comandos**: se mantienen ⌘⌥1–4; nuevos **⌘⌥5 acordes** y **⌘⌥C chat**.
+5. **Pantalla previa** (`PreJoin` + `RoomGate`): antes de entrar, preview de cámara/mic con medidor de nivel + campo de nombre; login Google **opcional** (solo profesores; estudiantes entran con nombre, que se usa como autor en el chat). La ruta `/room/[roomId]` ahora monta `RoomGate`.
+6. **Orientación de la cámara del celular** (`PhoneCam`): botón Vertical/Horizontal que re-pide la cámara con dimensiones intercambiadas (portrait 720×1280 para piano) y hace `replaceTrack` en vivo. El display usa `object-contain` (y el PiP local también cuando se usa el celular) para no recortar el retrato.
+7. **Chat (⌘⌥C)** (`ChatPanel`): panel lateral con burbujas propio/ajeno y badge de no leídos; sobre el canal de datos.
+
+**Nota dev**: `node_modules` estaba incompleto (faltaba `next-auth`) → `npm install` (sin `audit fix --force`). Next reconfiguró `tsconfig.json` automáticamente durante el build. Build + TypeScript OK; `/`, `/room/*`, `/cam/*` responden 200.
+
+## Sesión 4 — 2026-06-29 · Entrada unificada + creación solo para profesores
+
+Problema: el control de "quién crea una clase" era solo cosmético (el lobby ocultaba el botón, pero cualquiera que abriera `/room/<código>` y llegara primero se volvía host). Además la pre-sala tenía un botón Google opcional que duplicaba el login.
+
+- **Enlaces firmados (HMAC, stateless)** (`lib/roomToken.ts`): el código de sala sigue legible (peer id limpio) y la prueba viaja en `?t=<firma>`, donde firma = `HMAC-SHA256(AUTH_SECRET, code)`. `verifyRoom` usa comparación en tiempo constante. Sin base de datos.
+- **Creación gated** (`app/actions.ts`, server action `createClassLink`): verifica la sesión del profesor (`auth()`) y devuelve `/room/<code>?t=<firma>`. El lobby llama al action y navega.
+- **Verificación en el servidor** (`app/room/[roomId]/page.tsx`): ahora es **server component async**; lee `?t`, valida la firma y solo entonces monta `RoomGate`. Firma ausente/alterada → pantalla "Esta sala no es válida". El `?t=` queda en la barra de direcciones, así la invitación de la sala (`window.location.href`) ya lo arrastra para el estudiante.
+- **Lobby con dos caminos claros** (`Lobby.tsx`): tarjeta **Profesor** (login Google → Crear clase) y tarjeta **Estudiante** (pegar enlace → entrar; acepta link completo o código). Generación de código movida al servidor.
+- **Pre-sala limpia** (`PreJoin.tsx`): se quitó el botón "Entrar con Google (opcional)"; queda solo el chequeo de cámara/mic + nombre (prefill desde `localStorage`/sesión).
+- **Modo abierto preservado**: si faltan las env vars (`authConfigured=false`, local/preview), se omite la verificación y la creación es libre — no se rompe nada.
+
+Verificado en dev (env dummy): link firmado entra, sin token/alterado → "sala no válida"; logueado-fuera muestra login y oculta "Crear clase". Build + TypeScript OK.
+
 ## Pendientes / ideas futuras
 
 - [ ] Validar salas contra una base de datos (Supabase) para que solo existan salas creadas por profesores.
@@ -66,4 +93,4 @@ Registro de todo lo construido, decidido y configurado. Orden cronológico.
 
 ---
 
-*Mantenido por Claude (Cowork). Última actualización: 2026-06-11.*
+*Mantenido por Claude (Cowork). Última actualización: 2026-06-29.*
