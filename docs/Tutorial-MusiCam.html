@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>MusiCam — Guía del profesor</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1d2230; line-height: 1.5; font-size: 11.5pt; margin: 0;
+  }
+  h1, h2, h3 { color: #161a24; line-height: 1.2; }
+  .accent { color: #b8860b; }
+  a { color: #b8860b; text-decoration: none; }
+
+  /* Cover */
+  .cover {
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; height: 245mm; page-break-after: always;
+    background: #161a24; color: #fff; border-radius: 14px; padding: 20mm;
+  }
+  .cover .logo { font-size: 46pt; font-weight: 800; letter-spacing: -1px; }
+  .cover .logo span { color: #e8b339; }
+  .cover .tagline { margin-top: 6mm; font-size: 14pt; color: #c8cdda; max-width: 150mm; }
+  .cover .pill { margin-top: 12mm; font-size: 10.5pt; color: #9aa1b4; }
+  .cover .note-icon { font-size: 40pt; margin-bottom: 6mm; }
+
+  section { page-break-inside: avoid; }
+  h2 {
+    font-size: 16pt; margin: 0 0 4mm; padding-bottom: 2mm;
+    border-bottom: 2px solid #e8b339;
+  }
+  h3 { font-size: 12.5pt; margin: 5mm 0 1mm; }
+  p { margin: 0 0 2.5mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+  li { margin: 0 0 1.5mm; }
+
+  .step { display: flex; gap: 4mm; margin-bottom: 3mm; align-items: flex-start; }
+  .step .num {
+    flex: 0 0 auto; width: 8mm; height: 8mm; border-radius: 50%;
+    background: #e8b339; color: #161a24; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; font-size: 10pt;
+  }
+
+  kbd {
+    display: inline-block; background: #f4f1e8; border: 1px solid #d8cfb0;
+    border-bottom-width: 2px; border-radius: 5px; padding: 0.5mm 2mm;
+    font-family: "Consolas", monospace; font-size: 9.5pt; color: #5a4a16; white-space: nowrap;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 2mm 0 4mm; }
+  th, td { text-align: left; padding: 2mm 3mm; border-bottom: 1px solid #e6e3da; vertical-align: top; }
+  th { background: #f7f5ef; font-size: 10pt; color: #5a4a16; }
+  td.k { white-space: nowrap; }
+
+  .callout {
+    background: #fbf7ea; border-left: 4px solid #e8b339; border-radius: 0 8px 8px 0;
+    padding: 3mm 4mm; margin: 3mm 0; font-size: 10.5pt;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+  .card { background: #f7f6f1; border: 1px solid #e6e3da; border-radius: 10px; padding: 4mm; }
+  .card h3 { margin-top: 0; }
+  .pagebreak { page-break-before: always; }
+  footer { margin-top: 8mm; font-size: 9pt; color: #9aa1b4; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="note-icon">🎵</div>
+  <div class="logo">Musi<span>Cam</span></div>
+  <div class="tagline">Tu sala de clases de música en línea — con el sonido real del instrumento, cámara extra desde el celular y herramientas de músico.</div>
+  <div class="pill">Guía del profesor · v3 · musicam-update.vercel.app</div>
+  <div class="pill" style="margin-top:4mm">Creado por Rodrigo Pérez de Castro y Sebastián Suárez</div>
+</div>
+
+<section>
+  <h2>1. ¿Qué hace especial a MusiCam?</h2>
+  <p>Las apps de videollamada comunes <strong>destruyen el sonido del instrumento</strong>: activan supresión de ruido y cancelación de eco, y el resultado es un audio plano y con cortes. MusiCam transmite el audio <strong>crudo</strong> (Opus estéreo de alta calidad), así tu guitarra, piano o voz se escuchan tal cual son.</p>
+  <p>Además trae todo lo que un profesor necesita en la misma pantalla: segunda cámara desde el celular, afinador, metrónomo, caja de acordes, chat y grabación de la clase.</p>
+  <div class="callout"><strong>Recomendación clave:</strong> usa <strong>audífonos</strong>. Como no hay cancelación de eco (a propósito, para no dañar el sonido), los audífonos evitan que se produzca eco entre el micrófono y los parlantes.</div>
+</section>
+
+<section>
+  <h2>2. Para el profesor: crear una clase</h2>
+  <div class="step"><div class="num">1</div><div>Entra a <strong>musicam-update.vercel.app</strong>.</div></div>
+  <div class="step"><div class="num">2</div><div>En la tarjeta <strong>Profesor</strong>, presiona <strong>“Iniciar sesión con Google”</strong> y elige tu cuenta autorizada. La primera vez Google puede decir “app no verificada” → <em>Continuar</em> (es normal).</div></div>
+  <div class="step"><div class="num">3</div><div>Ya con sesión, presiona <strong>“Crear clase”</strong>. Se genera un enlace único y seguro para esa sesión.</div></div>
+  <div class="step"><div class="num">4</div><div>Dentro de la sala, arriba a la izquierda, usa <strong>“Invitar · &lt;código&gt;”</strong> para copiar el mensaje de invitación y enviárselo al estudiante por WhatsApp o correo.</div></div>
+  <div class="callout">Solo los profesores autorizados (con su cuenta de Google) pueden crear clases. El enlace de invitación lleva una firma de seguridad: <strong>compártelo completo</strong>, tal como se copia.</div>
+</section>
+
+<section>
+  <h2>3. Para el estudiante: entrar a la clase</h2>
+  <p>El estudiante <strong>no necesita cuenta</strong>. Solo abre el enlace que le enviaste. Si prefiere, también puede pegar el enlace en la tarjeta <strong>Estudiante</strong> de la página de inicio y presionar “Entrar a la clase”.</p>
+  <h3>Pantalla previa (antes de entrar)</h3>
+  <p>Antes de la videollamada aparece una pantalla para <strong>revisar cámara y micrófono</strong> y escribir un <strong>nombre</strong> (se usa en el chat). Cuando todo se ve y se escucha bien, presiona <strong>“Unirse a la clase”</strong>.</p>
+</section>
+
+<section class="pagebreak">
+  <h2>4. La barra de controles</h2>
+  <p>Abajo de la sala está la barra con todos los botones. Cada uno muestra un globo con su nombre y atajo al pasar el mouse por encima. De izquierda a derecha:</p>
+  <ul>
+    <li><strong>Micrófono</strong> y <strong>Cámara</strong>: silenciar/apagar tu audio o video.</li>
+    <li><strong>Cámaras y pantalla</strong> (numeradas 1–4): cámara principal, cámara del celular, compartir pantalla, vista dual.</li>
+    <li><strong>Acordes</strong> (5): caja de texto sobre el video.</li>
+    <li><strong>Afinador</strong> y <strong>Metrónomo</strong>.</li>
+    <li><strong>Grabar</strong> (punto rojo) y, al grabar, <strong>Marcar momento</strong> (bandera).</li>
+    <li><strong>Entrada de audio</strong> (ajustes) y <strong>Chat</strong>.</li>
+    <li><strong>Salir</strong>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>5. Atajos de teclado</h2>
+  <p>En Mac se usan con <kbd>⌘</kbd> + <kbd>⌥</kbd>; en Windows con <kbd>Ctrl</kbd> + <kbd>Alt</kbd>.</p>
+  <table>
+    <tr><th>Atajo</th><th>Acción</th></tr>
+    <tr><td class="k"><kbd>⌘⌥1</kbd></td><td>Cámara principal (la del computador)</td></tr>
+    <tr><td class="k"><kbd>⌘⌥2</kbd></td><td>Cámara del celular (muestra el QR si no está conectado)</td></tr>
+    <tr><td class="k"><kbd>⌘⌥3</kbd></td><td>Compartir pantalla (partituras, apps)</td></tr>
+    <tr><td class="k"><kbd>⌘⌥4</kbd></td><td>Vista dual: tu cara y tus manos lado a lado</td></tr>
+    <tr><td class="k"><kbd>⌘⌥5</kbd></td><td>Caja de acordes (texto sobre el video)</td></tr>
+    <tr><td class="k"><kbd>⌘⌥C</kbd></td><td>Chat de la clase</td></tr>
+    <tr><td class="k"><kbd>⌘⌥R</kbd></td><td>Iniciar grabación</td></tr>
+    <tr><td class="k"><kbd>⌘⌥M</kbd></td><td>Marcar un momento clave (durante la grabación)</td></tr>
+    <tr><td class="k"><kbd>Pausa</kbd></td><td>Detener la grabación y guardar</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>6. Cámaras: computador, celular y vista dual</h2>
+  <h3>Tu celular como segunda cámara</h3>
+  <div class="step"><div class="num">1</div><div>Presiona el botón de <strong>cámara del celular</strong> (<kbd>⌘⌥2</kbd>): aparece un código <strong>QR</strong>.</div></div>
+  <div class="step"><div class="num">2</div><div>Conecta el celular a la <strong>misma red WiFi</strong> y escanea el QR con su cámara; abre el enlace en el navegador.</div></div>
+  <div class="step"><div class="num">3</div><div>Apunta el celular a tus manos o al instrumento. En el computador, <kbd>⌘⌥2</kbd> cambia a esa cámara y <kbd>⌘⌥1</kbd> vuelve a la principal.</div></div>
+  <h3>Orientación: horizontal o vertical</h3>
+  <p>En la pantalla del celular hay un botón <strong>Vertical / Horizontal</strong>. Úsalo según el instrumento: <strong>horizontal</strong> para una guitarra, <strong>vertical</strong> para un piano o un teclado alto. El estudiante lo verá bien encuadrado.</p>
+  <h3>Vista dual</h3>
+  <p>Con <kbd>⌘⌥4</kbd> se muestran <strong>tu cara y tus manos a la vez</strong>, lado a lado. Requiere tener el celular conectado.</p>
+</section>
+
+<section class="pagebreak">
+  <h2>7. Caja de acordes <span class="accent">(⌘⌥5)</span></h2>
+  <p>Una caja de texto que escribes <strong>encima del video</strong> y que el estudiante ve en su propia pantalla, en el mismo lugar.</p>
+  <ul>
+    <li><strong>Escribe</strong> los acordes (por ejemplo: <em>Am  G  F</em>).</li>
+    <li><strong>Muévela</strong> arrastrándola por la pantalla.</li>
+    <li><strong>Cámbiale el tamaño</strong> estirando la esquina con el mouse.</li>
+    <li>Ajusta <strong>color</strong>, <strong>tamaño de letra</strong> y <strong>transparencia</strong> en la mini-barra de la caja.</li>
+  </ul>
+  <div class="callout">La caja la maneja el profesor; el estudiante la ve en tiempo real (solo lectura). Vuelve a presionar <kbd>⌘⌥5</kbd> para ocultarla.</div>
+</section>
+
+<section>
+  <h2>8. Chat <span class="accent">(⌘⌥C)</span></h2>
+  <p>Un panel de mensajes con el estudiante, útil para enviar el nombre de una pieza, un enlace o una nota rápida sin interrumpir. Si llega un mensaje con el chat cerrado, el botón muestra un <strong>contador de no leídos</strong>.</p>
+</section>
+
+<section>
+  <h2>9. Herramientas de músico</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Afinador</h3>
+      <p>Detecta la nota y su desviación en <strong>cents</strong> (zona verde = afinado). Notación <strong>americana</strong> (C, D, E, F, G, A, B). Puedes afinar <strong>tu</strong> instrumento o el del <strong>estudiante</strong> con el selector Tú / Estudiante.</p>
+    </div>
+    <div class="card">
+      <h3>Metrónomo</h3>
+      <p>Pulso compartido: lo escuchan <strong>ambos</strong>, sincronizado con tu instrumento. Tempo 40–208 BPM con nombre italiano y <strong>tap tempo</strong>.</p>
+    </div>
+    <div class="card">
+      <h3>Entrada de audio</h3>
+      <p>Elige micrófono o interfaz, canal <strong>estéreo / izquierdo / derecho</strong> (para interfaces con el instrumento en un solo canal), modo instrumento, potencia y anti-eco.</p>
+    </div>
+    <div class="card">
+      <h3>Sonido fiel</h3>
+      <p>Sin supresión de ruido ni cancelación de eco por defecto: el instrumento se transmite sin alteraciones. Por eso conviene usar audífonos.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>10. Grabar la clase</h2>
+  <div class="step"><div class="num">1</div><div>Presiona el botón rojo de grabar o <kbd>⌘⌥R</kbd>. Verás el indicador <strong>● REC</strong> arriba.</div></div>
+  <div class="step"><div class="num">2</div><div>Durante la grabación, marca <strong>momentos clave</strong> con <kbd>⌘⌥M</kbd> (un pasaje difícil, una corrección).</div></div>
+  <div class="step"><div class="num">3</div><div>Detén con la tecla <kbd>Pausa</kbd> (o el botón). Se guarda un video <strong>.webm</strong> en tu computador, y si marcaste momentos, también un <strong>.txt</strong> con los tiempos para repasar.</div></div>
+  <div class="callout">La grabación incluye el video de ambos y el audio sincronizado. En Macs sin tecla Pausa, usa el botón de detener.</div>
+</section>
+
+<section>
+  <h2>11. Consejos rápidos</h2>
+  <ul>
+    <li><strong>Audífonos siempre</strong> — evitan el eco.</li>
+    <li><strong>Celular en la misma WiFi</strong> que el computador, para una cámara fluida.</li>
+    <li><strong>Comparte el enlace completo</strong> de invitación (lleva la firma de seguridad).</li>
+    <li>Si la cámara del celular no aparece, recarga la pestaña del celular y vuelve a presionar <kbd>⌘⌥2</kbd>.</li>
+  </ul>
+  <footer>MusiCam · Guía del profesor v3 · 2026 — Rodrigo Pérez de Castro y Sebastián Suárez</footer>
+</section>
+
+</body>
+</html>

@@ -89,7 +89,7 @@ Verificado en dev (env dummy): link firmado entra, sin token/alterado → "sala 
 - [ ] Activar 2FA/passkey en la cuenta de Vercel (se omitió durante el setup).
 - [ ] Afinador: ¿modo de referencia configurable (A=440/442)?
 - [ ] Si se suman más profesores: agregarlos a la allowlist (código) y como test users (GCP), o publicar la app OAuth.
-- [x] Tutorial PDF: actualizado a v2 con afinador, selector de audio, metrónomo nuevo, barra de controles y login (2026-06-11).
+- [x] Tutorial PDF: actualizado a **v3** (2026-06-29) con caja de acordes, chat, pantalla previa, orientación de cámara del celular, afinador en notación americana y el nuevo flujo de entrada (login Google → crear clase, enlaces firmados). Fuente editable en `docs/Tutorial-MusiCam.html` (se regenera con Chrome headless `--print-to-pdf`).
 
 ---
 
