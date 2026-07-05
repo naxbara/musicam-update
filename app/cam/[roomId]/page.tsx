@@ -2,6 +2,7 @@
 
 import { use } from "react";
 import dynamic from "next/dynamic";
+import { sanitizePeerId } from "@/lib/peerConfig";
 
 const PhoneCam = dynamic(() => import("@/components/PhoneCam"), {
   ssr: false,
@@ -18,5 +19,12 @@ export default function CamPage({
   params: Promise<{ roomId: string }>;
 }) {
   const { roomId } = use(params);
-  return <PhoneCam roomId={decodeURIComponent(roomId)} />;
+  const code = decodeURIComponent(roomId);
+  return (
+    <PhoneCam
+      camPeerId={`musicam-${sanitizePeerId(code)}-cam`}
+      subtitle={`sala ${code}`}
+      mode="room"
+    />
+  );
 }
