@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>TURN para MusiCam — Guía de decisión</title>
+<style>
+  :root {
+    --ink: #1a1a1e;
+    --muted: #5b5b66;
+    --line: #e2e2e8;
+    --accent: #b8860b;      /* darker gold, legible on white */
+    --accent-soft: #fff6e0;
+    --green: #1a7f4b;
+    --green-soft: #e8f6ee;
+    --red: #b3261e;
+    --red-soft: #fdecea;
+    --blue: #1f5fb0;
+    --blue-soft: #eaf2fc;
+    --panel: #f7f7f9;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    margin: 0;
+    font-size: 10.5pt;
+    line-height: 1.5;
+  }
+  @page { size: A4; margin: 15mm 14mm; }
+
+  h1 { font-size: 21pt; margin: 0 0 2px; letter-spacing: -0.4px; }
+  h2 {
+    font-size: 13pt; margin: 22px 0 8px; padding-bottom: 5px;
+    border-bottom: 2px solid var(--accent);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  h2 .n {
+    font-size: 9pt; color: #fff; background: var(--accent);
+    border-radius: 5px; padding: 1px 7px; font-weight: 700;
+  }
+  h3 { font-size: 11pt; margin: 14px 0 4px; }
+  p { margin: 6px 0; }
+  .lead { color: var(--muted); font-size: 10.5pt; margin-top: 4px; }
+  strong { color: #000; }
+  code {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0.5px 5px; font-size: 9pt;
+  }
+  .brand { color: var(--accent); }
+  header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    border-bottom: 3px solid var(--ink); padding-bottom: 10px; margin-bottom: 4px;
+  }
+  header .meta { text-align: right; color: var(--muted); font-size: 8.5pt; }
+
+  .callout {
+    border-left: 4px solid var(--accent); background: var(--accent-soft);
+    padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0;
+  }
+  .callout.warn { border-color: var(--red); background: var(--red-soft); }
+  .callout.ok  { border-color: var(--green); background: var(--green-soft); }
+  .callout p { margin: 3px 0; }
+  .callout .t { font-weight: 700; font-size: 10pt; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .card {
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    background: #fff; break-inside: avoid;
+  }
+  .card .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+  .card h3 { margin: 0; }
+  .tag {
+    font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    padding: 2px 8px; border-radius: 20px;
+  }
+  .tag.rec { background: var(--green); color: #fff; }
+  .tag.alt { background: var(--blue-soft); color: var(--blue); }
+  .tag.adv { background: var(--panel); color: var(--muted); }
+  .price { font-size: 12pt; font-weight: 700; margin: 4px 0 6px; }
+  .price small { font-size: 8.5pt; color: var(--muted); font-weight: 400; }
+  ul.pm { list-style: none; padding: 0; margin: 6px 0 0; font-size: 9.2pt; }
+  ul.pm li { padding-left: 18px; position: relative; margin: 3px 0; }
+  ul.pm li.p::before { content: "+"; color: var(--green); font-weight: 700; position: absolute; left: 4px; }
+  ul.pm li.m::before { content: "−"; color: var(--red); font-weight: 700; position: absolute; left: 4px; }
+
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9pt; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--ink); color: #fff; font-weight: 600; font-size: 8.5pt; }
+  tbody tr:nth-child(even) { background: var(--panel); }
+  td .best { color: var(--green); font-weight: 700; }
+
+  pre {
+    background: #1c1c22; color: #eaeaf0; border-radius: 8px; padding: 12px 14px;
+    font-family: "SFMono-Regular", Consolas, monospace; font-size: 8.5pt;
+    line-height: 1.45; overflow-x: auto; margin: 8px 0;
+  }
+  pre .k { color: #e8b339; }
+  pre .s { color: #8fd98f; }
+  pre .c { color: #8b8b9a; }
+
+  ol.steps { margin: 6px 0; padding-left: 18px; }
+  ol.steps li { margin: 5px 0; }
+
+  .est { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
+  .est .box { border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; background: var(--panel); }
+  .est .big { font-size: 16pt; font-weight: 700; color: var(--accent); line-height: 1.1; }
+  .est .lbl { font-size: 8pt; color: var(--muted); margin-top: 3px; }
+
+  footer { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font-size: 8pt; }
+  .avoid { break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>TURN para <span class="brand">MusiCam</span></h1>
+    <div class="lead">Guía de decisión: qué es, por qué se necesita y qué opción contratar</div>
+  </div>
+  <div class="meta">
+    Preparado para Sebastián Suárez<br />
+    4 de julio de 2026<br />
+    Estado del código: <strong>listo</strong> (falta solo elegir proveedor)
+  </div>
+</header>
+
+<div class="callout">
+  <p class="t">En una frase</p>
+  <p>MusiCam ya funciona P2P entre profesor y estudiante, pero <strong>en algunas
+  redes (como la tuya) el video P2P no logra establecerse</strong> porque el tráfico
+  UDP está bloqueado. Un servidor <strong>TURN</strong> resuelve esto haciendo de
+  "puente" por un puerto que sí pasa (TCP/TLS 443). El código ya está preparado;
+  solo falta <strong>activar un proveedor</strong> y pegar una variable en Vercel.</p>
+</div>
+
+<h2><span class="n">1</span> ¿Qué es TURN? (y por qué existe)</h2>
+<p>Una videollamada intenta ir <strong>directo de un computador al otro</strong> (P2P):
+es lo más rápido y barato. Para lograrlo, WebRTC usa dos ayudantes:</p>
+<div class="grid2">
+  <div class="card avoid">
+    <h3>STUN — el "GPS"</h3>
+    <p style="font-size:9.5pt">Le dice a cada equipo <strong>cuál es su dirección pública</strong>
+    para que puedan encontrarse. Es gratis, liviano y <strong>MusiCam ya lo usa hoy</strong>
+    (STUN de Google). Funciona en la mayoría de las redes domésticas.</p>
+  </div>
+  <div class="card avoid">
+    <h3>TURN — el "puente"</h3>
+    <p style="font-size:9.5pt">Cuando la conexión directa <strong>no se puede</strong>
+    (firewall corporativo, red que bloquea UDP, ciertos operadores móviles/CGNAT), TURN
+    <strong>reenvía el video y audio por sus servidores</strong>, usando un puerto que
+    casi ningún firewall bloquea: <strong>TCP/TLS en el 443</strong> (el mismo de las webs seguras).</p>
+  </div>
+</div>
+<p class="lead">Analogía: STUN es intercambiar direcciones para juntarse en persona. Si una
+calle está cortada (UDP bloqueado), TURN es el mensajero que igual entrega el paquete
+por una ruta que siempre está abierta.</p>
+
+<h2><span class="n">2</span> Por qué MusiCam lo necesita <em>ahora</em></h2>
+<p>En las pruebas en terreno, la cámara y el video fallaban en tu red. Las capturas de
+consola que enviaste mostraban <strong>errores masivos de QUIC</strong>
+(<code>ERR_QUIC_PROTOCOL_ERROR</code>) en servicios de Google (Gmail, Meet). QUIC viaja
+por <strong>UDP</strong> — y WebRTC también. Es decir:</p>
+<div class="callout warn">
+  <p class="t">Diagnóstico</p>
+  <p>Tu red (o la del operador) está <strong>degradando o bloqueando UDP</strong>. Sin TURN
+  sobre TCP/TLS 443, el video de MusiCam <strong>no tiene por dónde salir</strong> en esa red.
+  Las mejoras de reconexión que ya subimos ayudan, pero <strong>no pueden crear un camino
+  que la red no permite</strong>. Eso solo lo resuelve TURN.</p>
+</div>
+
+<h2><span class="n">3</span> ¿Cuánto consume? (para dimensionar)</h2>
+<p>TURN <strong>solo se usa cuando el P2P falla</strong>. Muchas clases en redes normales
+<strong>ni tocarán el relay</strong>. Cuando sí lo usan, una clase 1:1 de MusiCam mueve
+aproximadamente <strong>1 GB por hora</strong> de datos relevados (audio hi-fi + video).</p>
+<div class="est">
+  <div class="box"><div class="big">~1 GB</div><div class="lbl">por hora de clase relevada</div></div>
+  <div class="box"><div class="big">~15–20 h</div><div class="lbl">de clases/mes cubre el plan gratis de 20&nbsp;GB</div></div>
+  <div class="box"><div class="big">solo si falla</div><div class="lbl">el P2P; en redes buenas no consume TURN</div></div>
+</div>
+<p class="lead">Conclusión: para el volumen actual de MusiCam (pocas clases, uso real), un
+<strong>plan gratuito de 20 GB alcanza con holgura</strong> durante bastante tiempo.</p>
+
+<h2><span class="n">4</span> Las opciones</h2>
+
+<div class="grid2">
+  <div class="card avoid">
+    <div class="head">
+      <h3>Metered — Open Relay</h3>
+      <span class="tag rec">Recomendada para empezar</span>
+    </div>
+    <div class="price">Gratis <small>· 20 GB/mes de TURN · STUN ilimitado</small></div>
+    <p style="font-size:9.2pt">Servicio TURN administrado, credenciales estáticas listas
+    para pegar. Puertos 80 y 443, UDP/TCP/TLS.</p>
+    <ul class="pm">
+      <li class="p">Cero costo y <strong>cero mantenimiento</strong></li>
+      <li class="p">Activación en <strong>minutos</strong> (el código ya lo soporta)</li>
+      <li class="p">TLS 443 → resuelve exactamente tu problema</li>
+      <li class="m">Infra compartida (no garantía de SLA)</li>
+      <li class="m">20 GB/mes es un techo (suficiente hoy)</li>
+    </ul>
+  </div>
+
+  <div class="card avoid">
+    <div class="head">
+      <h3>Cloudflare Realtime TURN</h3>
+      <span class="tag alt">Mejor para escalar</span>
+    </div>
+    <div class="price">US$0,05 / GB <small>· pago por uso, sin plan mensual</small></div>
+    <p style="font-size:9.2pt">Red global de Cloudflare, altísima fiabilidad. Credenciales
+    temporales vía API. Soporta TLS 443.</p>
+    <ul class="pm">
+      <li class="p">Muy confiable y de <strong>baja latencia global</strong></li>
+      <li class="p">Barato por uso (20 GB ≈ <strong>US$1</strong>)</li>
+      <li class="p">Escala sin cambiar de proveedor</li>
+      <li class="m">Requiere cuenta Cloudflare + generar credenciales por API</li>
+      <li class="m">Sin bolsa gratis si se usa TURN por separado</li>
+    </ul>
+  </div>
+
+  <div class="card avoid">
+    <div class="head">
+      <h3>Coturn (auto-hospedado)</h3>
+      <span class="tag adv">Máximo control</span>
+    </div>
+    <div class="price">~US$5–6 / mes <small>· VPS (Hetzner/DigitalOcean)</small></div>
+    <p style="font-size:9.2pt">Tú corres el servidor TURN en un VPS propio. Ancho de banda
+    prácticamente ilimitado dentro del plan del VPS.</p>
+    <ul class="pm">
+      <li class="p">Costo fijo bajo, <strong>datos ilimitados</strong> (según VPS)</li>
+      <li class="p"><strong>Privacidad total</strong> (el media no pasa por terceros)</li>
+      <li class="m">Tú lo instalas, aseguras y mantienes (TLS, updates)</li>
+      <li class="m">Necesita un dominio y certificado para el 443</li>
+    </ul>
+  </div>
+
+  <div class="card avoid">
+    <div class="head">
+      <h3>Twilio / Xirsys</h3>
+      <span class="tag adv">Enterprise</span>
+    </div>
+    <div class="price">~US$0,40 / GB <small>· pago por uso</small></div>
+    <p style="font-size:9.2pt">TURN administrado de grado empresarial. Fiable, pero
+    <strong>8× más caro</strong> que Cloudflare para el mismo tráfico.</p>
+    <ul class="pm">
+      <li class="p">Robusto, soporte empresarial</li>
+      <li class="m">Caro para el volumen de MusiCam</li>
+      <li class="m">Sin ventaja real frente a las opciones de arriba hoy</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="n">5</span> Comparación rápida</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Opción</th><th>Costo</th><th>Esfuerzo de setup</th>
+      <th>Mantenimiento</th><th>Fiabilidad</th><th>Ideal si…</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Metered Open Relay</strong></td>
+      <td><span class="best">Gratis (20 GB)</span></td>
+      <td class="best">Mínimo (minutos)</td>
+      <td class="best">Ninguno</td>
+      <td>Buena</td>
+      <td>Quieres arreglarlo <strong>ya</strong>, volumen bajo</td>
+    </tr>
+    <tr>
+      <td><strong>Cloudflare TURN</strong></td>
+      <td>US$0,05/GB</td>
+      <td>Medio (cuenta + API)</td>
+      <td>Ninguno</td>
+      <td class="best">Excelente</td>
+      <td>Piensas crecer y quieres pagar solo lo usado</td>
+    </tr>
+    <tr>
+      <td><strong>Coturn propio</strong></td>
+      <td>~US$5–6/mes fijo</td>
+      <td>Alto (servidor)</td>
+      <td>Tuyo</td>
+      <td>Depende de ti</td>
+      <td>Priorizas control/privacidad y sabes operar un VPS</td>
+    </tr>
+    <tr>
+      <td><strong>Twilio / Xirsys</strong></td>
+      <td>~US$0,40/GB</td>
+      <td>Medio</td>
+      <td>Ninguno</td>
+      <td class="best">Excelente</td>
+      <td>Cliente empresarial exige SLA formal</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">6</span> Recomendación</h2>
+<div class="callout ok">
+  <p class="t">Plan sugerido en dos pasos</p>
+  <p><strong>1. Ahora →</strong> Activar <strong>Metered Open Relay (gratis, 20 GB/mes)</strong>.
+  Es la forma de <strong>menor esfuerzo y cero costo</strong> de arreglar la falla de tu red
+  hoy mismo. El código de MusiCam ya está preparado para recibirlo.</p>
+  <p><strong>2. Si crece el uso →</strong> Migrar a <strong>Cloudflare TURN</strong>
+  (US$0,05/GB, pago por uso). Es un cambio de <strong>una sola variable</strong>, sin tocar
+  la app. Reservar Coturn propio solo si en el futuro pesa la privacidad o el volumen.</p>
+</div>
+<p class="lead">Por qué no partir por Cloudflare: es excelente, pero pide crear credenciales
+por API. Metered te deja probar en minutos y confirmar que TURN <strong>efectivamente
+resuelve</strong> tu red antes de invertir tiempo. El costo de cambiar después es trivial.</p>
+
+<h2><span class="n">7</span> Cómo activarlo (cuando decidas)</h2>
+<h3>Opción A — Metered Open Relay (recomendada)</h3>
+<ol class="steps">
+  <li>Crear cuenta gratis en <code>metered.ca</code> → sección <strong>TURN Server / Open Relay</strong>.</li>
+  <li>Copiar las credenciales que entrega (URLs <code>turn:</code>/<code>turns:</code>, <code>username</code>, <code>credential</code>).</li>
+  <li>En <strong>Vercel</strong> (proyecto <code>musicam-update</code>) → <em>Settings → Environment
+  Variables</em> → crear <code>ICE_SERVERS</code> (Production + Preview) con este contenido:</li>
+</ol>
+<pre><span class="c">// Valor de la variable ICE_SERVERS (JSON en una línea)</span>
+[
+  { <span class="k">"urls"</span>: <span class="s">"stun:stun.l.google.com:19302"</span> },
+  { <span class="k">"urls"</span>: <span class="s">"turns:tu-servidor.metered.live:443?transport=tcp"</span>,
+    <span class="k">"username"</span>: <span class="s">"xxxxxxxx"</span>, <span class="k">"credential"</span>: <span class="s">"xxxxxxxx"</span> }
+]</pre>
+<ol class="steps" start="4">
+  <li>Hacer <strong>Redeploy</strong> en Vercel para que tome la variable. Listo — la app
+  empieza a usar TURN automáticamente (lo lee vía <code>/api/ice</code>).</li>
+</ol>
+
+<h3>Opción B — Cloudflare TURN</h3>
+<p style="font-size:9.5pt">Igual de simple del lado de MusiCam: se genera un
+<em>TURN Token</em> en el panel de Cloudflare Realtime, se obtienen las credenciales
+(por API) y se pegan en la <strong>misma variable</strong> <code>ICE_SERVERS</code> con el
+formato de arriba. No se toca el código.</p>
+
+<div class="callout">
+  <p><strong>Nota técnica:</strong> el código ya incluye <code>lib/peerConfig.ts</code> +
+  <code>app/api/ice/route.ts</code>. Sin <code>ICE_SERVERS</code>, MusiCam sigue como hoy
+  (solo STUN). Con la variable puesta, todos los peers usan TURN sin ningún otro cambio.
+  Cambiar de proveedor = editar esa variable y redeploy.</p>
+</div>
+
+<footer>
+  MusiCam · Documento de decisión sobre TURN · Precios verificados el 4-jul-2026 en las
+  páginas oficiales de Metered y Cloudflare (pueden variar). Estimaciones de consumo
+  aproximadas para clases 1:1. Preparado por el equipo técnico de MusiCam.
+</footer>
+
+</body>
+</html>
