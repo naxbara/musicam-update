@@ -20,23 +20,28 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 3 · PeerJS (W
 app/page.tsx                    # Server component: lee sesión → <Lobby>
 app/actions.ts                  # Server action createClassLink (gated a profesor) → link firmado
 app/room/[roomId]/page.tsx      # Server component: verifica firma ?t= → <RoomGate> o "sala no válida"
-app/cam/[roomId]/page.tsx       # Página que abre el celular (cámara remota)
+app/cam/[roomId]/page.tsx       # Cámara por sala: pasa camPeerId musicam-<code>-cam a <PhoneCam>
+app/cam/device/[deviceId]/      # Cámara fija (URL permanente): page (metadata+manifest) + DeviceCam + manifest.webmanifest/route
+app/api/ice/route.ts            # GET { iceServers } desde env ICE_SERVERS (JSON) o STUN por defecto
 app/api/auth/[...nextauth]/     # Handlers NextAuth
 auth.ts                         # Config Google + ALLOWED_TEACHERS (allowlist) + authConfigured
 lib/roomToken.ts                # Firma/verificación HMAC de salas (server-only, AUTH_SECRET)
+lib/peerConfig.ts               # sanitizePeerId, getIceServers (fetch /api/ice cacheado + fallback STUN), createPeer(id?)
+lib/pairing.ts                  # Celular vinculado (localStorage): createDeviceId, get/set/clearPairedDevice, devCamPeerId
 components/RoomGate.tsx         # Muestra <PreJoin> hasta unirse, luego monta <CallRoom>
 components/PreJoin.tsx          # Pre-sala: preview cámara/mic + nombre + Google opcional
 components/CallRoom.tsx         # Núcleo: peer, data channel, cámaras, atajos, grabación, paneles
-components/PhoneCam.tsx         # Celular: transmite su cámara (girar + orientación V/H)
+components/PhoneCam.tsx         # Celular: transmite su cámara, con reconexión/backoff; props {camPeerId, subtitle, mode}
+components/CameraMenu.tsx       # Dropdown de fuentes de video (webcams, celular, pantalla, vista dual + fuente B)
 components/Lobby.tsx            # Lobby: login profesor / entrada estudiante
-components/TunerPanel.tsx       # Afinador (nota americana C–B, cents, Hz, fuente tú/estudiante)
+components/TunerPanel.tsx       # Afinador (nota americana C–B, cents, Hz, fuente tú/estudiante, A4 440/441/442)
 components/MetronomePanel.tsx   # Metrónomo (BPM, tap tempo, beat dots)
 components/ChordOverlay.tsx     # Caja de acordes movible/redimensionable (sync vía data channel)
 components/ChatPanel.tsx        # Chat de la sala (sync vía data channel)
 components/AudioSettingsPanel.tsx # Mic/interfaz, canal L/R/estéreo, boost, anti-eco
 components/icons.tsx            # Set de iconos SVG de línea propios
 lib/audio.ts                    # Captura cruda, cadena instrumento, canal, SDP Opus hi-fi
-lib/tuner.ts                    # Detección de pitch (autocorrelación ACF2+, notación americana)
+lib/tuner.ts                    # Pitch (ACF2+, fftSize 4096, clarity gate, suavizado, A4 configurable)
 lib/metronome.ts                # Scheduler look-ahead + onBeat callback
 lib/recorder.ts                 # Grabación canvas + mezcla audio, guardado a Escritorio
 ```
@@ -56,7 +61,13 @@ el estudiante los ve en solo lectura.
 ## Identificadores de sala (PeerJS)
 
 - Sala: `musicam-<código>` (el primero en llegar es host; el segundo lo llama).
-- Celular-cámara: `musicam-<código>-cam` (el profesor lo llama con ⌘⌥2).
+- Celular-cámara por sala: `musicam-<código>-cam` (el profesor lo llama con ⌘⌥2 / botón).
+- Celular-cámara fija (vinculado): `musicam-dev-<deviceId>` — coexiste con el legacy; `connectPhoneCam` marca **ambos en paralelo** y gana el primer stream. El `deviceId` vive en localStorage (`musicam-paired-cam`) en la máquina del profesor; el celular abre `/cam/device/<id>` (URL permanente, instalable como PWA).
+
+## Conexión resiliente (ICE / reconexión)
+
+- Todos los `Peer` se crean con `createPeer()` (`lib/peerConfig.ts`), que inyecta `iceServers` desde `/api/ice`. Sin `ICE_SERVERS` en el entorno → solo STUN público (comportamiento actual). Para activar **TURN** (necesario en redes con UDP bloqueado): setear `ICE_SERVERS` en Vercel con un JSON de `RTCIceServer[]` incluyendo un `turns:…:443?transport=tcp`. No hay servicio TURN contratado aún.
+- `PhoneCam` y `CallRoom` reintentan con backoff, hacen `peer.reconnect()` en `disconnected`, y re-adquieren la cámara/re-llaman al volver a primer plano. El guest reabre el data channel en su loop de redial.
 
 ## Auth (solo profesores) y creación de clase
 
@@ -68,6 +79,7 @@ el estudiante los ve en solo lectura.
 - Allowlist en `auth.ts`: `ssuarez@gmail.com`, `rperezdecastro@gmail.com`.
 - Google Cloud: proyecto **MusiCam** (`molten-castle-499203-q0`), cliente "MusiCam Web", app en **modo testing** → los mismos 2 emails como test users. Para sumar profesores: agregar en ambos lados.
 - Env vars en Vercel (Production+Preview): `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`. Sin ellas `authConfigured=false` → **modo abierto**: creación libre y verificación de firma omitida (no romper deploys/local). Local: `.env.local`.
+- Env vars opcionales de conexión: `ICE_SERVERS` (server-side, JSON de `RTCIceServer[]` — para TURN); `NEXT_PUBLIC_PEER_HOST/PORT/PATH` (broker peerjs propio). Sin ellas: STUN público + broker 0.peerjs.com.
 - Los estudiantes NUNCA necesitan cuenta (entran por el enlace firmado).
 
 ## Convenciones y advertencias
@@ -89,4 +101,4 @@ git push         # → auto-deploy en Vercel
 
 ## Pendientes
 
-Ver sección "Pendientes / ideas futuras" en `BITACORA.md` (validación de salas con DB, borrar repo viejo, 2FA Vercel, actualizar tutorial PDF).
+Ver sección "Pendientes / ideas futuras" en `BITACORA.md`. Prioritario: **activar TURN** (setear `ICE_SERVERS` con Metered/Cloudflare — código ya listo, solo falta contratar cuenta) para las redes con UDP bloqueado. Otros: validación de salas con DB, borrar repo viejo, 2FA Vercel, actualizar tutorial PDF a v4 (selector de cámaras, URL fija, vista dual generalizada, A4).

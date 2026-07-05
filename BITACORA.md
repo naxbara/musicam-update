@@ -82,15 +82,47 @@ Problema: el control de "quién crea una clase" era solo cosmético (el lobby oc
 
 Verificado en dev (env dummy): link firmado entra, sin token/alterado → "sala no válida"; logueado-fuera muestra login y oculta "Crear clase". Build + TypeScript OK.
 
+## Sesión 5 — 2026-07-04 · Cámara externa confiable, selector de fuentes, URL fija y afinador preciso
+
+Ejecución del plan `docs/PLAN-MEJORAS.md` (diagnóstico del 2026-07-02 + feedback "Versión 4"). Motivo: los profesores reportaban que la cámara del celular fallaba; el diagnóstico halló que `PhoneCam` no se recuperaba de nada (recarga → `unavailable-id` clavado; segundo plano → frame congelado) y que la conexión hacía un solo intento sin reintentos ni ICE/TURN.
+
+**P0 — Resiliencia de la cámara externa**
+- **`lib/peerConfig.ts`** (nuevo): `sanitizePeerId`, `getIceServers()` (fetch cacheado a `/api/ice`, fallback STUN), `createPeer(id?)` con config ICE compartida y hooks opcionales de broker propio (`NEXT_PUBLIC_PEER_HOST/PORT/PATH`). Todos los peers pasan por acá.
+- **`app/api/ice/route.ts`** (nuevo): sirve `{ iceServers }` desde la env server-side `ICE_SERVERS` (JSON); sin env → STUN público. **TURN queda listo por env, sin contratar servicio aún** (ver P2).
+- **`PhoneCam.tsx`** (reescrito): nuevos estados (`init/no-camera/retrying/ready/live/busy/error`); ciclo de peer con **reintentos + backoff** (2→4→8→15s, `busy` recién a los ~90s), `peer.reconnect()` en `disconnected`; `acquireCamera()` reutilizable con `track.onended → reacquire` y **re-adquisición al volver a primer plano** (fix del frame congelado iOS); en llamada entrante cierra la anterior antes de contestar (el redial del profesor gana) + `oniceconnectionstatechange`. Props ahora `{ camPeerId, subtitle, mode }`.
+- **`CallRoom.tsx`**: `createPeer()` en host y guest; `peer.reconnect()` en `disconnected` de ambos; **loop de redial del guest cada 4s (~15 intentos) que reabre el data channel** (chat/acordes ya no mueren si el estudiante llega primero); `wireCall` avisa en conexión inestable y el guest re-llama en `failed`. `connectPhoneCam` → helper `callCamPeer(targetId, timeoutMs)` + **3 intentos × 6s**, con `phoneConnecting` para la UI y fallback a la cámara del PC si el ICE del celular cae en vivo.
+
+**P1a — Selector de cámaras con un clic**
+- El botón del celular ahora **siempre** hace `selectSecondCamera()` (celular → 2ª webcam → QR), con pulso "conectando".
+- `switchCamera(index)` → `switchCamera(deviceId?)`; se trackea `currentCamId`. `refreshAudioDevices` → `refreshDevices` (también lista `videoDevices`).
+- **`CameraMenu.tsx`** (nuevo): dropdown sobre "Cámara principal" (chevron) — cada webcam por nombre, "Cámara del celular" con punto de estado, pantalla, vista dual + selector "junto a:", y "Vincular celular (QR)…". Un clic = un cambio. Atajos 1–4 intactos.
+
+**P1b — URL fija / celular vinculado (sin DB)**
+- **`lib/pairing.ts`** (nuevo): `createDeviceId()` (UUID→12 chars base36), `getPairedDevice/setPairedDevice/clearPairedDevice` (localStorage `musicam-paired-cam`), `devCamPeerId(id)` = `musicam-dev-<id>`.
+- **`app/cam/device/[deviceId]/`** (nuevo): server component con `generateMetadata` (manifest), wrapper client `DeviceCam`, y **`manifest.webmanifest/route.ts`** por dispositivo (WebAPK Android lanza el `start_url`). Banner "cámara fija" + copy "deja el celular conectado a la corriente". Sin gate (el UUID es el secreto) y **sin service worker**.
+- `connectPhoneCam` marca **en paralelo** el dispositivo vinculado (`musicam-dev-<id>`) y el legacy (`musicam-<code>-cam`); gana el primer stream. Overlay QR con sección colapsable "Vincular este celular de forma permanente": generar enlace fijo + 2º QR + copiar + instrucciones A2HS (Android/iPhone) + estado "vinculado ✓ · fecha" + desvincular.
+- **Iconos PWA** derivados del logo: `public/icons/cam-192.png`, `cam-512.png`, `apple-touch-icon.png`.
+
+**P1c — Segunda fuente de video simultánea (vista dual generalizada)**
+- `toggleDualView(source?)` compone cara + **fuente B elegible**: `phone` (call P2P existente), `device` (2ª webcam por `deviceId`, track local adicional) o `screen` (`getDisplayMedia`). Al salir de dual se detiene el track extra (la del celular sigue en su call). Combinación persistida en `musicam-dual-source`; el submenú de `CameraMenu` la elige; la cámara activa se excluye como fuente B.
+
+**P1d — Precisión del afinador**
+- `lib/tuner.ts`: `fftSize` 2048 → **4096** (~7 períodos en E2); `autoCorrelate` devuelve **clarity** (`maxVal/c[0]`) y descarta lecturas < 0.5 (no más notas fantasma en silencio); **suavizado temporal** en `PitchDetector` (mediana de 5 frecuencias + histéresis de nota 2 frames + EMA de cents); **A4 configurable** (440/441/442, `setReferenceHz`, selector en `TunerPanel` persistido en `musicam-tuner-a4`).
+
+Build + TypeScript OK con todas las rutas nuevas.
+
 ## Pendientes / ideas futuras
 
+- [ ] **Activar TURN en producción** (⬆ prioridad): las capturas del usuario mostraban errores QUIC masivos en servicios Google → UDP degradado en su red; sin TURN sobre TCP/TLS 443, WebRTC no tiene salida ahí. El código (P0) ya está listo: crear cuenta Metered (20 GB/mes gratis) o Cloudflare Calls y setear `ICE_SERVERS` en Vercel. Falta decisión de Sebastián de crear la cuenta.
 - [ ] Validar salas contra una base de datos (Supabase) para que solo existan salas creadas por profesores.
 - [ ] Borrar el repo antiguo `ssuarez-crosslines/musicam`.
 - [ ] Activar 2FA/passkey en la cuenta de Vercel (se omitió durante el setup).
-- [ ] Afinador: ¿modo de referencia configurable (A=440/442)?
 - [ ] Si se suman más profesores: agregarlos a la allowlist (código) y como test users (GCP), o publicar la app OAuth.
+- [ ] Descomponer `CallRoom.tsx` en hooks (`usePeerConnection`, `useVideoSource`, `usePhoneCam`, `useRecording`) y añadir tests (vitest) de `roomToken`, `tuner`, `pairing`.
+- [ ] Actualizar tutorial PDF (v4) con: selector de cámaras, URL fija / celular instalable, vista dual con segunda webcam/pantalla, afinador con A4.
+- [x] Afinador: modo de referencia A4 configurable (440/441/442) — hecho en sesión 5.
 - [x] Tutorial PDF: actualizado a **v3** (2026-06-29) con caja de acordes, chat, pantalla previa, orientación de cámara del celular, afinador en notación americana y el nuevo flujo de entrada (login Google → crear clase, enlaces firmados). Fuente editable en `docs/Tutorial-MusiCam.html` (se regenera con Chrome headless `--print-to-pdf`).
 
 ---
 
-*Mantenido por Claude (Cowork). Última actualización: 2026-06-29.*
+*Mantenido por Claude (Cowork). Última actualización: 2026-07-04.*
