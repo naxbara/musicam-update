@@ -4,6 +4,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Peer, { MediaConnection, DataConnection } from "peerjs";
+import { createPeer, sanitizePeerId } from "@/lib/peerConfig";
+import {
+  clearPairedDevice,
+  createDeviceId,
+  devCamPeerId,
+  getPairedDevice,
+  setPairedDevice,
+  type PairedDevice,
+} from "@/lib/pairing";
 import {
   buildAudioConstraints,
   createInstrumentChain,
@@ -11,6 +20,7 @@ import {
   type ChannelMode,
   type InstrumentChain,
 } from "@/lib/audio";
+import CameraMenu, { type DualSourceKind } from "@/components/CameraMenu";
 import { CallRecorder, drawCover, saveRecording } from "@/lib/recorder";
 import { Metronome } from "@/lib/metronome";
 import TunerPanel from "@/components/TunerPanel";
@@ -64,8 +74,10 @@ export default function CallRoom({
   const router = useRouter();
 
   // Stable peer IDs for this session
-  const baseId = `musicam-${roomId.replace(/[^a-z0-9-]/gi, "-")}`;
+  const baseId = `musicam-${sanitizePeerId(roomId)}`;
   const camPeerId = `${baseId}-cam`;
+  // A permanently paired phone (if any) is dialed alongside the per-room cam.
+  const pairedRef = useRef<string | null>(null);
 
   // --- refs (mutable call machinery) ---
   const peerRef = useRef<Peer | null>(null);
@@ -78,12 +90,15 @@ export default function CallRoom({
   const outStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const phoneStreamRef = useRef<MediaStream | null>(null);
+  const phoneCallRef = useRef<MediaConnection | null>(null);
   const recorderRef = useRef<CallRecorder>(new CallRecorder());
   const metroRef = useRef<Metronome | null>(null);
   const dualRef = useRef<{
     raf: number;
     faceEl: HTMLVideoElement;
-    phoneEl: HTMLVideoElement;
+    srcBEl: HTMLVideoElement;
+    /** Extra local track (device webcam / screen) to stop when leaving dual. */
+    stopTrack: MediaStreamTrack | null;
   } | null>(null);
   const recStartRef = useRef(0);
   const markersRef = useRef<number[]>([]);
@@ -92,6 +107,7 @@ export default function CallRoom({
   const containerRef = useRef<HTMLDivElement>(null);
   const pipRef = useRef<HTMLDivElement>(null);
   const showChatRef = useRef(false);
+  const usingPhoneRef = useRef(false);
 
   // --- state ---
   const [status, setStatus] = useState<Status>("init");
@@ -106,7 +122,9 @@ export default function CallRoom({
   const [echoCancel, setEchoCancel] = useState(false);
   const [channel, setChannel] = useState<ChannelMode>("stereo");
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [micId, setMicId] = useState<string | null>(null);
+  const [currentCamId, setCurrentCamId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [pipSize, setPipSize] = useState<{ w: number; h: number }>({ w: PIP_W, h: PIP_H });
@@ -115,8 +133,16 @@ export default function CallRoom({
   const [showTuner, setShowTuner] = useState(false);
   const [showMetro, setShowMetro] = useState(false);
   const [usingPhone, setUsingPhone] = useState(false);
+  const [phoneConnecting, setPhoneConnecting] = useState(false);
   const [showPhoneQR, setShowPhoneQR] = useState(false);
+  const [showCameraMenu, setShowCameraMenu] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  // Permanent phone pairing (URL fija).
+  const [paired, setPaired] = useState<PairedDevice | null>(null);
+  const [deviceQrDataUrl, setDeviceQrDataUrl] = useState<string | null>(null);
+  const [showPairing, setShowPairing] = useState(false);
+  // Second source for the generalized dual view (persisted across classes).
+  const [dualSourceB, setDualSourceB] = useState<DualSourceKind>("phone");
   const [metroOn, setMetroOn] = useState(false);
   const [bpm, setBpm] = useState(92);
   const [beat, setBeat] = useState(-1);
@@ -153,14 +179,18 @@ export default function CallRoom({
     }
   }, []);
 
-  const refreshAudioDevices = useCallback(async () => {
+  const refreshDevices = useCallback(async () => {
     try {
       const list = await navigator.mediaDevices.enumerateDevices();
       setAudioDevices(list.filter((d) => d.kind === "audioinput"));
+      setVideoDevices(list.filter((d) => d.kind === "videoinput"));
     } catch {
       /* ignore */
     }
   }, []);
+
+  // Guest re-dials the host on a dropped connection; set by setup().
+  const redialHostRef = useRef<(() => void) | null>(null);
 
   const wireCall = useCallback(
     (call: MediaConnection) => {
@@ -178,6 +208,21 @@ export default function CallRoom({
         notify("El otro participante salió de la sala");
       });
       call.on("error", () => setStatus("error"));
+
+      // Recover from a flaky network: warn on a blip, and if it fully fails the
+      // guest re-dials the host (the host just waits for the redial).
+      const pc = call.peerConnection;
+      if (pc) {
+        pc.addEventListener("connectionstatechange", () => {
+          if (pc.connectionState === "disconnected") {
+            notify("Conexión inestable… reintentando");
+          } else if (pc.connectionState === "failed") {
+            if (remoteStreamRef.current) return;
+            setStatus("waiting");
+            redialHostRef.current?.();
+          }
+        });
+      }
     },
     [notify]
   );
@@ -242,7 +287,8 @@ export default function CallRoom({
         setLocalRawStream(rawAudioRef.current);
         cameraTrackRef.current = media.getVideoTracks()[0] ?? null;
         setMicId(media.getAudioTracks()[0]?.getSettings().deviceId ?? null);
-        void refreshAudioDevices();
+        setCurrentCamId(media.getVideoTracks()[0]?.getSettings().deviceId ?? null);
+        void refreshDevices();
 
         const chain = createInstrumentChain(rawAudioRef.current, "stereo");
         chainRef.current = chain;
@@ -258,36 +304,68 @@ export default function CallRoom({
         const hostId = baseId;
         const sdpOpts = { sdpTransform: hifiOpusSdp };
 
-        const startAsGuest = () => {
+        // A phone-cam target that vanished is background noise; only surface it
+        // when *every* phone target fails (matches both legacy and paired ids).
+        const isCamId = (msg: string) =>
+          msg.includes("-cam") || msg.includes("musicam-dev-");
+
+        const startAsGuest = async () => {
           setIsHost(false);
-          const guest = new Peer();
+          const guest = await createPeer();
+          if (cancelled) {
+            guest.destroy();
+            return;
+          }
           peerRef.current = guest;
-          guest.on("open", () => {
+
+          // Redial + re-open the data channel (chat/chords die otherwise if the
+          // student arrives first). Retried on a loop until the host answers.
+          const dialHost = () => {
+            if (cancelled || remoteStreamRef.current) return;
             const call = guest.call(hostId, outStreamRef.current!, sdpOpts);
             wireCall(call);
-            wireData(guest.connect(hostId, { reliable: true }));
+            if (!dataConnRef.current?.open) {
+              wireData(guest.connect(hostId, { reliable: true }));
+            }
+          };
+          redialHostRef.current = dialHost;
+
+          guest.on("open", () => {
+            dialHost();
+            // Keep retrying every 4s (~15 tries) until the host is present.
+            let tries = 0;
+            const loop = window.setInterval(() => {
+              if (cancelled || remoteStreamRef.current || tries++ > 15) {
+                window.clearInterval(loop);
+                return;
+              }
+              dialHost();
+            }, 4000);
+          });
+          guest.on("disconnected", () => {
+            if (!cancelled) {
+              try {
+                guest.reconnect();
+              } catch {
+                /* ignore */
+              }
+            }
           });
           guest.on("error", (err: any) => {
             if (err.type === "peer-unavailable") {
-              if (String(err.message).includes("-cam")) {
-                notify("El celular aún no está conectado. Escanea el QR del botón de celular.");
-                return;
-              }
+              if (isCamId(String(err.message))) return; // phone dial handles its own copy
               setStatus("waiting");
-              notify("La sala aún no tiene anfitrión. Reintentando…");
-              window.setTimeout(() => {
-                if (!cancelled && !remoteStreamRef.current) {
-                  const call = guest.call(hostId, outStreamRef.current!, sdpOpts);
-                  wireCall(call);
-                }
-              }, 4000);
-            } else {
+            } else if (err.type !== "network" && err.type !== "disconnected") {
               setStatus("error");
             }
           });
         };
 
-        const host = new Peer(hostId);
+        const host = await createPeer(hostId);
+        if (cancelled) {
+          host.destroy();
+          return;
+        }
         peerRef.current = host;
         host.on("open", () => {
           setIsHost(true);
@@ -298,16 +376,23 @@ export default function CallRoom({
           wireCall(call);
         });
         host.on("connection", (conn) => wireData(conn));
+        host.on("disconnected", () => {
+          if (!cancelled) {
+            try {
+              host.reconnect();
+            } catch {
+              /* ignore */
+            }
+          }
+        });
         host.on("error", (err: any) => {
           if (err.type === "unavailable-id") {
             // Room already has a host — join as guest
             host.destroy();
-            startAsGuest();
+            void startAsGuest();
           } else if (err.type === "peer-unavailable") {
-            if (String(err.message).includes("-cam")) {
-              notify("El celular aún no está conectado. Escanea el QR del botón de celular.");
-            }
-          } else {
+            if (isCamId(String(err.message))) return;
+          } else if (err.type !== "network" && err.type !== "disconnected") {
             setStatus("error");
           }
         });
@@ -317,12 +402,13 @@ export default function CallRoom({
       }
     }
 
+    pairedRef.current = getPairedDevice()?.id ?? null;
     void setup();
-    navigator.mediaDevices.addEventListener?.("devicechange", refreshAudioDevices);
+    navigator.mediaDevices.addEventListener?.("devicechange", refreshDevices);
 
     return () => {
       cancelled = true;
-      navigator.mediaDevices.removeEventListener?.("devicechange", refreshAudioDevices);
+      navigator.mediaDevices.removeEventListener?.("devicechange", refreshDevices);
       dataConnRef.current?.close();
       callRef.current?.close();
       peerRef.current?.destroy();
@@ -352,6 +438,14 @@ export default function CallRoom({
       if (savedSize) setPipSize(JSON.parse(savedSize));
       const savedChord = localStorage.getItem(CHORD_KEY);
       if (savedChord) setChordBox((b) => ({ ...b, ...JSON.parse(savedChord) }));
+      const savedDual = localStorage.getItem("musicam-dual-source");
+      if (savedDual) {
+        const parsed = JSON.parse(savedDual);
+        if (parsed === "phone" || parsed === "screen" || parsed?.deviceId) {
+          setDualSourceB(parsed);
+        }
+      }
+      setPaired(getPairedDevice());
     } catch {
       /* ignore */
     }
@@ -361,6 +455,11 @@ export default function CallRoom({
   useEffect(() => {
     showChatRef.current = showChat;
   }, [showChat]);
+
+  // Mirror `usingPhone` into a ref for event handlers (ICE fallback, etc.)
+  useEffect(() => {
+    usingPhoneRef.current = usingPhone;
+  }, [usingPhone]);
 
   // Platform detection for shortcut labels (⌘⌥ on Mac, Ctrl+Alt elsewhere)
   useEffect(() => {
@@ -484,7 +583,10 @@ export default function CallRoom({
     if (!d) return;
     cancelAnimationFrame(d.raf);
     d.faceEl.srcObject = null;
-    d.phoneEl.srcObject = null;
+    d.srcBEl.srcObject = null;
+    // Release the extra local source (device webcam / screen); the phone track
+    // belongs to its own peer call and keeps running.
+    d.stopTrack?.stop();
     dualRef.current = null;
     setDualActive(false);
   }, []);
@@ -523,60 +625,116 @@ export default function CallRoom({
     }
   }, [replaceSenderTrack, setLocalPreview, stopScreenShare, stopDualComposite, notify]);
 
-  /** Calls the phone (registered as `<room>-cam`) and waits for its stream. */
-  const connectPhoneCam = useCallback((): Promise<MediaStream | null> => {
-    if (phoneStreamRef.current) return Promise.resolve(phoneStreamRef.current);
-    const peer = peerRef.current;
-    if (!peer || !outStreamRef.current) return Promise.resolve(null);
-
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (s: MediaStream | null) => {
-        if (!settled) {
+  /** One dial attempt to a specific cam peer id; resolves the call+stream. */
+  const callCamPeer = useCallback(
+    (targetId: string, timeoutMs: number): Promise<{ call: MediaConnection; stream: MediaStream } | null> => {
+      const peer = peerRef.current;
+      if (!peer || !outStreamRef.current) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = (v: { call: MediaConnection; stream: MediaStream } | null) => {
+          if (settled) return;
           settled = true;
-          resolve(s);
-        }
-      };
-      const call = peer.call(camPeerId, outStreamRef.current!);
-      if (!call) {
-        finish(null);
-        return;
-      }
-      const timer = window.setTimeout(() => finish(null), 8000);
-      call.on("stream", (stream) => {
-        window.clearTimeout(timer);
-        phoneStreamRef.current = stream;
-        finish(stream);
-      });
-      call.on("close", () => {
-        phoneStreamRef.current = null;
-        setUsingPhone(false);
-        notify("El celular se desconectó");
-      });
-      call.on("error", () => {
-        window.clearTimeout(timer);
-        finish(null);
-      });
-    });
-  }, [camPeerId, notify]);
-
-  const switchCamera = useCallback(
-    async (index: number) => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cams = devices.filter((d) => d.kind === "videoinput");
-        if (!cams[index]) {
-          notify(
-            index === 0 ? "No se encontró cámara" : "No hay segunda cámara conectada"
-          );
+          resolve(v);
+        };
+        const call = peer.call(targetId, outStreamRef.current!);
+        if (!call) {
+          finish(null);
           return;
         }
+        const timer = window.setTimeout(() => {
+          call.close();
+          finish(null);
+        }, timeoutMs);
+        call.on("stream", (stream) => {
+          window.clearTimeout(timer);
+          finish({ call, stream });
+        });
+        call.on("error", () => {
+          window.clearTimeout(timer);
+          finish(null);
+        });
+      });
+    },
+    []
+  );
+
+  /**
+   * Connects the phone camera. Dials the paired device (if any) and the
+   * per-room cam in parallel — first stream wins, the loser is closed — with
+   * up to 3 attempts of 6s each. On a mid-call ICE failure while the phone is
+   * the active source, falls back to the local camera so the student never
+   * sees a black frame.
+   */
+  const connectPhoneCam = useCallback(async (): Promise<MediaStream | null> => {
+    if (phoneStreamRef.current) return phoneStreamRef.current;
+    const peer = peerRef.current;
+    if (!peer || !outStreamRef.current) return null;
+
+    const targets = pairedRef.current
+      ? [devCamPeerId(pairedRef.current), camPeerId]
+      : [camPeerId];
+
+    setPhoneConnecting(true);
+    notify("Conectando con el celular…");
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const results = await Promise.all(targets.map((t) => callCamPeer(t, 6000)));
+        const winnerIdx = results.findIndex((r) => r !== null);
+        if (winnerIdx === -1) continue;
+
+        const winner = results[winnerIdx]!;
+        // Close the losing dials so we don't leave a second call half-open.
+        results.forEach((r, i) => {
+          if (r && i !== winnerIdx) r.call.close();
+        });
+
+        phoneCallRef.current = winner.call;
+        phoneStreamRef.current = winner.stream;
+
+        winner.call.on("close", () => {
+          phoneStreamRef.current = null;
+          phoneCallRef.current = null;
+          setUsingPhone(false);
+          notify("El celular se desconectó");
+        });
+        const pc = winner.call.peerConnection;
+        if (pc) {
+          pc.addEventListener("iceconnectionstatechange", () => {
+            if (
+              (pc.iceConnectionState === "failed" ||
+                pc.iceConnectionState === "disconnected") &&
+              usingPhoneRef.current
+            ) {
+              notify("Se perdió la cámara del celular — volviendo a la cámara del computador");
+              void switchCamera();
+            }
+          });
+        }
+        return winner.stream;
+      }
+      return null;
+    } finally {
+      setPhoneConnecting(false);
+    }
+    // switchCamera is referenced before definition; it's stable via ref below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camPeerId, callCamPeer, notify]);
+
+  /**
+   * Switch the local camera. No argument = the browser's default camera; a
+   * `deviceId` = that exact webcam. Tracks the active camera id so the menu can
+   * mark it and the dual view can avoid picking the same device twice.
+   */
+  const switchCamera = useCallback(
+    async (deviceId?: string) => {
+      try {
         if (screenTrackRef.current) stopScreenShare();
         stopDualComposite();
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            deviceId: { exact: cams[index].deviceId },
+            ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
             width: { ideal: 1280 },
             height: { ideal: 720 },
           },
@@ -587,13 +745,15 @@ export default function CallRoom({
         newTrack.enabled = camOn;
         replaceSenderTrack("video", newTrack);
         setLocalPreview(newTrack);
+        setCurrentCamId(newTrack.getSettings().deviceId ?? deviceId ?? null);
         setUsingPhone(false);
-        notify(index === 0 ? "Cámara principal activada" : "Segunda cámara activada");
+        void refreshDevices();
+        notify(deviceId ? "Cámara cambiada" : "Cámara principal activada");
       } catch {
         notify("No se pudo cambiar de cámara");
       }
     },
-    [camOn, replaceSenderTrack, setLocalPreview, stopScreenShare, stopDualComposite, notify]
+    [camOn, replaceSenderTrack, setLocalPreview, stopScreenShare, stopDualComposite, refreshDevices, notify]
   );
 
   /**
@@ -617,11 +777,12 @@ export default function CallRoom({
       }
     }
 
-    // No phone — try a second local webcam
+    // No phone — try a second local webcam (the one that isn't active now)
     const devices = await navigator.mediaDevices.enumerateDevices();
     const cams = devices.filter((d) => d.kind === "videoinput");
-    if (cams.length > 1) {
-      await switchCamera(1);
+    const other = cams.find((c) => c.deviceId && c.deviceId !== currentCamId);
+    if (cams.length > 1 && other) {
+      await switchCamera(other.deviceId);
       return;
     }
 
@@ -634,78 +795,122 @@ export default function CallRoom({
     stopScreenShare,
     stopDualComposite,
     switchCamera,
+    currentCamId,
     notify,
   ]);
 
   /**
-   * ⌘⌥4 — dual view: face cam + phone cam composited side by side on a
-   * canvas, sent as a single video track.
+   * ⌘⌥4 — dual view: main cam + a second video source (phone, another webcam,
+   * or the screen) composited side by side on a canvas, sent as one track.
    */
-  const toggleDualView = useCallback(async () => {
-    if (dualRef.current) {
-      stopDualComposite();
-      const cam = cameraTrackRef.current;
-      if (cam) {
-        replaceSenderTrack("video", cam);
-        setLocalPreview(cam);
+  const toggleDualView = useCallback(
+    async (source?: DualSourceKind) => {
+      if (dualRef.current) {
+        stopDualComposite();
+        const cam = cameraTrackRef.current;
+        if (cam) {
+          replaceSenderTrack("video", cam);
+          setLocalPreview(cam);
+        }
+        notify("Vista dual desactivada");
+        return;
       }
-      notify("Vista dual desactivada");
-      return;
-    }
-    if (screenTrackRef.current) stopScreenShare();
+      if (screenTrackRef.current) stopScreenShare();
 
-    const phone = await connectPhoneCam();
-    if (!phone || phone.getVideoTracks().length === 0) {
-      setShowPhoneQR(true);
-      notify("Para la vista dual, conecta primero tu celular (código QR)");
-      return;
-    }
-    const cam = cameraTrackRef.current;
-    if (!cam) {
-      notify("No hay cámara principal disponible");
-      return;
-    }
+      const kind = source ?? dualSourceB;
+      setDualSourceB(kind);
+      try {
+        localStorage.setItem("musicam-dual-source", JSON.stringify(kind));
+      } catch {
+        /* ignore */
+      }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = 1280;
-    canvas.height = 720;
-    const c2d = canvas.getContext("2d")!;
+      const cam = cameraTrackRef.current;
+      if (!cam) {
+        notify("No hay cámara principal disponible");
+        return;
+      }
 
-    const makeVideo = (stream: MediaStream) => {
-      const el = document.createElement("video");
-      el.muted = true;
-      el.playsInline = true;
-      el.srcObject = stream;
-      return el;
-    };
-    const faceEl = makeVideo(new MediaStream([cam]));
-    const phoneEl = makeVideo(phone);
-    await Promise.all([faceEl.play(), phoneEl.play()]).catch(() => undefined);
+      // Acquire source B. `stopTrack` is the extra local track we must stop
+      // when leaving dual (device webcam / screen); the phone track lives in
+      // its own peer call and is left running.
+      let sourceBStream: MediaStream | null = null;
+      let stopTrack: MediaStreamTrack | null = null;
+      if (kind === "phone") {
+        sourceBStream = await connectPhoneCam();
+        if (!sourceBStream || sourceBStream.getVideoTracks().length === 0) {
+          setShowPhoneQR(true);
+          notify("Para la vista dual, conecta primero tu celular (código QR)");
+          return;
+        }
+      } else if (kind === "screen") {
+        try {
+          const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+          sourceBStream = display;
+          stopTrack = display.getVideoTracks()[0] ?? null;
+        } catch {
+          return; // user cancelled the picker
+        }
+      } else {
+        // kind === "device": a second webcam by deviceId
+        try {
+          sourceBStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              deviceId: { exact: kind.deviceId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          });
+          stopTrack = sourceBStream.getVideoTracks()[0] ?? null;
+        } catch {
+          notify("No se pudo abrir la segunda cámara");
+          return;
+        }
+      }
 
-    const draw = () => {
-      c2d.fillStyle = "#000";
-      c2d.fillRect(0, 0, 1280, 720);
-      if (faceEl.readyState >= 2) drawCover(c2d, faceEl, 0, 0, 638, 720);
-      if (phoneEl.readyState >= 2) drawCover(c2d, phoneEl, 642, 0, 638, 720);
-      if (dualRef.current) dualRef.current.raf = requestAnimationFrame(draw);
-    };
-    dualRef.current = { raf: 0, faceEl, phoneEl };
-    draw();
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const c2d = canvas.getContext("2d")!;
 
-    const track = canvas.captureStream(30).getVideoTracks()[0];
-    replaceSenderTrack("video", track);
-    setLocalPreview(track);
-    setDualActive(true);
-    setUsingPhone(false);
-    notify("Vista dual: cara + manos");
-  }, [
-    connectPhoneCam,
-    replaceSenderTrack,
-    setLocalPreview,
-    stopScreenShare,
-    stopDualComposite,
-    notify,
-  ]);
+      const makeVideo = (stream: MediaStream) => {
+        const el = document.createElement("video");
+        el.muted = true;
+        el.playsInline = true;
+        el.srcObject = stream;
+        return el;
+      };
+      const faceEl = makeVideo(new MediaStream([cam]));
+      const srcBEl = makeVideo(sourceBStream);
+      await Promise.all([faceEl.play(), srcBEl.play()]).catch(() => undefined);
+
+      const draw = () => {
+        c2d.fillStyle = "#000";
+        c2d.fillRect(0, 0, 1280, 720);
+        if (faceEl.readyState >= 2) drawCover(c2d, faceEl, 0, 0, 638, 720);
+        if (srcBEl.readyState >= 2) drawCover(c2d, srcBEl, 642, 0, 638, 720);
+        if (dualRef.current) dualRef.current.raf = requestAnimationFrame(draw);
+      };
+      dualRef.current = { raf: 0, faceEl, srcBEl, stopTrack };
+      draw();
+
+      const track = canvas.captureStream(30).getVideoTracks()[0];
+      replaceSenderTrack("video", track);
+      setLocalPreview(track);
+      setDualActive(true);
+      setUsingPhone(false);
+      notify("Vista dual: cara + segunda fuente");
+    },
+    [
+      connectPhoneCam,
+      dualSourceB,
+      replaceSenderTrack,
+      setLocalPreview,
+      stopScreenShare,
+      stopDualComposite,
+      notify,
+    ]
+  );
 
   // ----------------------------------------------------------- metronome
 
@@ -790,6 +995,35 @@ export default function CallRoom({
       .then(setQrDataUrl)
       .catch(() => setQrDataUrl(null));
   }, [showPhoneQR, roomId]);
+
+  // Generate the QR for the permanent device link when there's a paired device
+  const deviceLink = paired ? `${typeof window !== "undefined" ? window.location.origin : ""}/cam/device/${paired.id}` : null;
+  useEffect(() => {
+    if (!showPhoneQR || !deviceLink) {
+      setDeviceQrDataUrl(null);
+      return;
+    }
+    import("qrcode")
+      .then((QR) => QR.toDataURL(deviceLink, { width: 220, margin: 1 }))
+      .then(setDeviceQrDataUrl)
+      .catch(() => setDeviceQrDataUrl(null));
+  }, [showPhoneQR, deviceLink]);
+
+  /** Create (or replace) the permanent pairing for this teacher's phone. */
+  const generatePairing = useCallback(() => {
+    const device = setPairedDevice(createDeviceId());
+    setPaired(device);
+    pairedRef.current = device.id;
+    setShowPairing(true);
+    notify("Enlace fijo generado — escanéalo en el celular una sola vez");
+  }, [notify]);
+
+  const unpair = useCallback(() => {
+    clearPairedDevice();
+    setPaired(null);
+    pairedRef.current = null;
+    notify("Celular desvinculado. Deberás re-escanear el enlace en el celular.");
+  }, [notify]);
 
   // ------------------------------------------------------------ recording
 
@@ -902,7 +1136,7 @@ export default function CallRoom({
       switch (e.code) {
         case "Digit1":
           e.preventDefault();
-          void a.switchCamera(0);
+          void a.switchCamera();
           break;
         case "Digit2":
           e.preventDefault();
@@ -1240,9 +1474,93 @@ export default function CallRoom({
             >
               Copiar enlace para el celular
             </button>
+            {/* Permanent pairing (URL fija) */}
+            <div className="mt-4 border-t border-gray-700 pt-3 text-left">
+              <button
+                onClick={() => setShowPairing((v) => !v)}
+                className="flex w-full items-center justify-between text-xs font-semibold text-gray-200"
+              >
+                <span>📌 Vincular este celular de forma permanente</span>
+                <span className="text-gray-500">{showPairing ? "▲" : "▼"}</span>
+              </button>
+
+              {showPairing && (
+                <div className="mt-3 space-y-3">
+                  {paired ? (
+                    <>
+                      <p className="text-[11px] leading-relaxed text-gray-300">
+                        Escanea este código <b>una sola vez</b> en el celular y
+                        agrégalo a la pantalla de inicio. Luego funcionará en
+                        cualquier clase sin volver a escanear.
+                      </p>
+                      <div className="flex justify-center">
+                        {deviceQrDataUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={deviceQrDataUrl}
+                            alt="Código QR de la cámara fija"
+                            className="rounded-lg bg-white p-2"
+                          />
+                        ) : (
+                          <div className="flex h-40 w-40 items-center justify-center rounded-lg bg-white/10 text-xs text-gray-400">
+                            Generando…
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!deviceLink) return;
+                          try {
+                            await navigator.clipboard.writeText(deviceLink);
+                            notify("Enlace fijo copiado");
+                          } catch {
+                            /* clipboard blocked */
+                          }
+                        }}
+                        className="w-full rounded-lg border border-gray-600 px-4 py-2 text-xs hover:border-accent hover:text-accent"
+                      >
+                        Copiar enlace fijo
+                      </button>
+                      <div className="rounded-lg bg-black/30 p-2 text-[10px] leading-relaxed text-gray-400">
+                        <b>Agregar a pantalla de inicio:</b>
+                        <br />
+                        Android: menú ⋮ → &ldquo;Agregar a pantalla de inicio&rdquo;.
+                        <br />
+                        iPhone: compartir → &ldquo;Agregar a pantalla de inicio&rdquo;.
+                      </div>
+                      <p className="text-[11px] text-emerald-400">
+                        Celular vinculado ✓ ·{" "}
+                        {new Date(paired.pairedAt).toLocaleDateString("es-CL")}
+                      </p>
+                      <button
+                        onClick={unpair}
+                        className="w-full rounded-lg bg-white/10 px-4 py-2 text-xs text-red-300 hover:bg-white/20"
+                      >
+                        Desvincular
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[11px] leading-relaxed text-gray-300">
+                        Genera un enlace fijo para dejar un celular instalado
+                        como cámara. Se conectará solo en cada clase, sin escanear
+                        de nuevo.
+                      </p>
+                      <button
+                        onClick={generatePairing}
+                        className="w-full rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-black hover:brightness-110"
+                      >
+                        Generar enlace fijo
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => setShowPhoneQR(false)}
-              className="mt-2 w-full rounded-lg bg-white/10 px-4 py-2 text-xs hover:bg-white/20"
+              className="mt-3 w-full rounded-lg bg-white/10 px-4 py-2 text-xs hover:bg-white/20"
             >
               Cerrar
             </button>
@@ -1269,25 +1587,54 @@ export default function CallRoom({
 
         <Divider />
 
-        <HotkeyButton
-          onClick={() => void switchCamera(0)}
-          active={true}
-          label={<Badged n={1}><VideoIcon /></Badged>}
-          name="Cámara principal"
-          description="Vuelve a la cámara del computador (la que viene por defecto)."
-          shortcut={sc("1")}
-        />
-        <HotkeyButton
-          onClick={() =>
-            phoneStreamRef.current ? void selectSecondCamera() : setShowPhoneQR(true)
-          }
-          active={!usingPhone}
-          accent={usingPhone}
-          label={<Badged n={2}><PhoneIcon /></Badged>}
-          name="Cámara del celular"
-          description="Cambia a la cámara del celular. Si aún no está conectado, muestra el código QR para vincularlo."
-          shortcut={sc("2")}
-        />
+        <div className="relative">
+          <HotkeyButton
+            onClick={() => void switchCamera()}
+            active={true}
+            label={<Badged n={1}><VideoIcon /></Badged>}
+            name="Cámara principal"
+            description="Elige la cámara del computador. Toca el chevron para ver todas las fuentes de video."
+            shortcut={sc("1")}
+          />
+          <button
+            onClick={() => setShowCameraMenu((v) => !v)}
+            aria-label="Elegir cámara"
+            className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-[9px] text-accent hover:bg-black"
+          >
+            ▾
+          </button>
+          <CameraMenu
+            open={showCameraMenu}
+            videoDevices={videoDevices}
+            currentCamId={currentCamId}
+            usingPhone={usingPhone}
+            phoneConnecting={phoneConnecting}
+            phoneConnected={!!phoneStreamRef.current}
+            sharing={sharing}
+            dualActive={dualActive}
+            dualSourceB={dualSourceB}
+            onPickCamera={(id) => void switchCamera(id)}
+            onPickPhone={() => void selectSecondCamera()}
+            onShareScreen={() => void toggleScreenShare()}
+            onDualView={(src) => void toggleDualView(src)}
+            onLinkPhone={() => setShowPhoneQR(true)}
+            onClose={() => setShowCameraMenu(false)}
+          />
+        </div>
+        <div className="relative">
+          <HotkeyButton
+            onClick={() => void selectSecondCamera()}
+            active={!usingPhone}
+            accent={usingPhone}
+            label={<Badged n={2}><PhoneIcon /></Badged>}
+            name="Cámara del celular"
+            description="Cambia a la cámara del celular con un clic. Si aún no está conectado, muestra el código QR."
+            shortcut={sc("2")}
+          />
+          {phoneConnecting && (
+            <span className="rec-pulse pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-amber-400" />
+          )}
+        </div>
         <HotkeyButton
           onClick={() => void toggleScreenShare()}
           active={!sharing}
