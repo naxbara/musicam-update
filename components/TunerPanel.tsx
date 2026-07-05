@@ -21,8 +21,29 @@ export default function TunerPanel({
 }) {
   const [source, setSource] = useState<"local" | "remote">("local");
   const [reading, setReading] = useState<PitchReading | null>(null);
+  const [a4, setA4] = useState(440);
   const detectorRef = useRef<PitchDetector | null>(null);
   const lastGoodRef = useRef<{ r: PitchReading; t: number } | null>(null);
+
+  // Restore the A4 reference (persisted across sessions)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("musicam-tuner-a4");
+      if (saved) setA4(Number(saved));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Apply A4 changes live without rebuilding the detector
+  useEffect(() => {
+    detectorRef.current?.setReferenceHz(a4);
+    try {
+      localStorage.setItem("musicam-tuner-a4", String(a4));
+    } catch {
+      /* ignore */
+    }
+  }, [a4]);
 
   useEffect(() => {
     if (!open) return;
@@ -31,7 +52,7 @@ export default function TunerPanel({
       setReading(null);
       return;
     }
-    const detector = new PitchDetector(stream);
+    const detector = new PitchDetector(stream, a4);
     detectorRef.current = detector;
     let raf = 0;
     const loop = () => {
@@ -51,6 +72,8 @@ export default function TunerPanel({
       detector.close();
       detectorRef.current = null;
     };
+    // a4 is applied live via setReferenceHz — don't rebuild the detector on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, source, localStream, remoteStream]);
 
   if (!open) return null;
@@ -134,6 +157,26 @@ export default function TunerPanel({
         <button onClick={onClose} className="text-gray-400 hover:text-white">
           Cerrar
         </button>
+      </div>
+
+      {/* A4 reference */}
+      <div className="mt-3 flex items-center justify-between border-t border-gray-700 pt-2.5">
+        <span className="text-[10px] uppercase tracking-wider text-gray-500">
+          Referencia A4
+        </span>
+        <div className="flex items-center gap-1 rounded-full bg-white/10 p-0.5 text-[10px]">
+          {[440, 441, 442].map((hz) => (
+            <button
+              key={hz}
+              onClick={() => setA4(hz)}
+              className={`rounded-full px-2.5 py-1 transition ${
+                a4 === hz ? "bg-accent font-semibold text-black" : "text-gray-300"
+              }`}
+            >
+              {hz}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
