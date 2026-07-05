@@ -101,4 +101,4 @@ git push         # → auto-deploy en Vercel
 
 ## Pendientes
 
-Ver sección "Pendientes / ideas futuras" en `BITACORA.md`. Prioritario: **activar TURN** (setear `ICE_SERVERS` con Metered/Cloudflare — código ya listo, solo falta contratar cuenta) para las redes con UDP bloqueado. Otros: validación de salas con DB, borrar repo viejo, 2FA Vercel, actualizar tutorial PDF a v4 (selector de cámaras, URL fija, vista dual generalizada, A4).
+**Roadmap de producto en `docs/ROADMAP.md`** (2026-07-05): diagnóstico + 3 fases — robustez para el profesor actual (TURN con Metered, host determinístico, UX de reconexión, tests/observabilidad) → fundaciones multi-profesor (Supabase, registro, dashboard, publicar OAuth) → comercialización (landing, pricing, cobro). Ver también "Pendientes / ideas futuras" en `BITACORA.md`. Prioritario: **activar TURN** (setear `ICE_SERVERS` con Metered/Cloudflare — código ya listo, solo falta contratar cuenta) para las redes con UDP bloqueado. Otros: validación de salas con DB, borrar repo viejo, 2FA Vercel, actualizar tutorial PDF a v4 (selector de cámaras, URL fija, vista dual generalizada, A4).

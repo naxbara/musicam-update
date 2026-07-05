@@ -113,6 +113,8 @@ Build + TypeScript OK con todas las rutas nuevas.
 
 ## Pendientes / ideas futuras
 
+> **Roadmap de producto (2026-07-05)**: diagnóstico completo + plan en 3 fases (robustez → multi-profesor → comercialización) en `docs/ROADMAP.md`. Los pendientes de abajo quedan absorbidos por sus fases.
+
 - [ ] **Activar TURN en producción** (⬆ prioridad): las capturas del usuario mostraban errores QUIC masivos en servicios Google → UDP degradado en su red; sin TURN sobre TCP/TLS 443, WebRTC no tiene salida ahí. El código (P0) ya está listo: crear cuenta Metered (20 GB/mes gratis) o Cloudflare Calls y setear `ICE_SERVERS` en Vercel. Falta decisión de Sebastián de crear la cuenta.
 - [ ] Validar salas contra una base de datos (Supabase) para que solo existan salas creadas por profesores.
 - [ ] Borrar el repo antiguo `ssuarez-crosslines/musicam`.
